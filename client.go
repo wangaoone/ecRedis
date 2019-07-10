@@ -1,6 +1,7 @@
 package ecRedis
 
 import (
+	"bytes"
 	"github.com/klauspost/reedsolomon"
 	"github.com/wangaoone/redeo/resp"
 	"net"
@@ -11,6 +12,7 @@ type Client struct {
 	W       []*resp.RequestWriter
 	R       []resp.ResponseReader
 	EC      reedsolomon.Encoder
+	Rec     bytes.Buffer
 }
 
 func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
