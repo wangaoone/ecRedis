@@ -16,8 +16,10 @@ type Client struct {
 }
 
 func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
-	return Client{ConnArr: make([]net.Conn, dataShards+parityShards),
-		W:  make([]*resp.RequestWriter, dataShards+parityShards),
-		R:  make([]resp.ResponseReader, dataShards+parityShards),
-		EC: NewEncoder(dataShards, parityShards, ecMaxGoroutine)}
+	return Client{
+		ConnArr: make([]net.Conn, dataShards+parityShards),
+		W:       make([]*resp.RequestWriter, dataShards+parityShards),
+		R:       make([]resp.ResponseReader, dataShards+parityShards),
+		EC:      NewEncoder(dataShards, parityShards, ecMaxGoroutine),
+	}
 }
