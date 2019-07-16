@@ -100,12 +100,15 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	var id int64
 	// peeking response type and receive
 	// client id
-	t0, err := c.R[i].PeekType()
+	type0, err := c.R[i].PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	switch t0 {
+	fmt.Println("after 1st peektype len is", c.R[i].Buffered())
+	t1 := time.Since(t)
+
+	switch type0 {
 	case resp.TypeInt:
 		id, err = c.R[i].ReadInt()
 		if err != nil {
@@ -115,13 +118,15 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
+	t2 := time.Since(t)
 	// chunk
-	t1, err := c.R[i].PeekType()
+	type1, err := c.R[i].PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	switch t1 {
+	t3 := time.Since(t)
+	switch type1 {
 	case resp.TypeBulk:
 		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
 		if err != nil {
@@ -130,9 +135,9 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
+	t4 := time.Since(t)
 	wg.Done()
-	fmt.Println("go routine rec time is", time.Since(t))
-
+	fmt.Println("go routine rec time is", t, t1, t2, t3, t4)
 }
 
 func (c *Client) Receive() {
