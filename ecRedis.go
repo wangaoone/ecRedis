@@ -9,6 +9,7 @@ import (
 	"net"
 	"strconv"
 	"sync"
+	"time"
 )
 
 func NewRequestWriter(wr io.Writer) *resp.RequestWriter {
@@ -94,41 +95,53 @@ func (c *Client) EcGet(key string) {
 	fmt.Println("EcGet all goroutines are done!")
 }
 
-func (c *Client) Receive() {
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
-		var id int64
-		var chunk []byte
-		// peeking response type and receive
-		// client id
-		t0, err := c.R[i].PeekType()
-		if err != nil {
-			fmt.Println("peekType err", err)
-			return
-		}
-		switch t0 {
-		case resp.TypeInt:
-			id, err = c.R[i].ReadInt()
-			if err != nil {
-				fmt.Println("typeBulk err", err)
-			}
-		default:
-			panic("unexpected response type")
-		}
-		// chunk
-		t1, err := c.R[i].PeekType()
-		if err != nil {
-			fmt.Println("peekType err", err)
-			return
-		}
-		switch t1 {
-		case resp.TypeBulk:
-			chunk, err = c.R[i].ReadBulk(nil)
-			if err != nil {
-				fmt.Println("typeBulk err", err)
-			}
-		default:
-			panic("unexpected response type")
-		}
-		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)] = chunk
+func (c *Client) rec(wg *sync.WaitGroup, i int) {
+	t := time.Now()
+	var id int64
+	// peeking response type and receive
+	// client id
+	t0, err := c.R[i].PeekType()
+	if err != nil {
+		fmt.Println("peekType err", err)
+		return
 	}
+	switch t0 {
+	case resp.TypeInt:
+		id, err = c.R[i].ReadInt()
+		if err != nil {
+			fmt.Println("typeBulk err", err)
+		}
+		fmt.Println("id is ", id)
+	default:
+		panic("unexpected response type")
+	}
+	// chunk
+	t1, err := c.R[i].PeekType()
+	if err != nil {
+		fmt.Println("peekType err", err)
+		return
+	}
+	switch t1 {
+	case resp.TypeBulk:
+		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
+		if err != nil {
+			fmt.Println("typeBulk err", err)
+		}
+		//fmt.Println("chunk is ", chunk)
+	default:
+		panic("unexpected response type")
+	}
+	wg.Done()
+	fmt.Println("go routine rec time is", time.Since(t))
+
+}
+
+func (c *Client) Receive() {
+	var wg sync.WaitGroup
+	for i := 0; i < redeo.DataShards; i++ {
+		wg.Add(1)
+		go c.rec(&wg, i)
+	}
+	wg.Wait()
+	fmt.Println("EcReceive all goroutines are done!")
 }

@@ -57,6 +57,6 @@ func Decoding(encoder reedsolomon.Encoder, data [][]byte, fileSize int) (bytes.B
 	if err != nil {
 		fmt.Println(err)
 	}
-	fmt.Println(res.Bytes())
+	fmt.Println("decode val len is ", len(res.Bytes()))
 	return res, err
 }
