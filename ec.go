@@ -32,7 +32,7 @@ func Encoding(encoder reedsolomon.Encoder, obj []byte) ([][]byte, error) {
 	return shards, err
 }
 
-func Decoding(encoder reedsolomon.Encoder, data [][]byte, fileSize int) (bytes.Buffer, error) {
+func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
 	ok, err := encoder.Verify(data)
 	if ok {
 		fmt.Println("No reconstruction needed")
@@ -53,10 +53,10 @@ func Decoding(encoder reedsolomon.Encoder, data [][]byte, fileSize int) (bytes.B
 	}
 	// output
 	var res bytes.Buffer
-	err = encoder.Join(&res, data, fileSize)
-	if err != nil {
-		fmt.Println(err)
-	}
-	fmt.Println("decode val len is ", len(res.Bytes()))
+	//err = encoder.Join(&res, data, fileSize)
+	//if err != nil {
+	//	fmt.Println(err)
+	//}
+	//fmt.Println("decode val len is ", len(res.Bytes()))
 	return res, err
 }

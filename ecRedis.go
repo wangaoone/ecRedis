@@ -127,7 +127,6 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 		if err != nil {
 			fmt.Println("typeBulk err", err)
 		}
-		//fmt.Println("chunk is ", chunk)
 	default:
 		panic("unexpected response type")
 	}
