@@ -7,6 +7,7 @@ import (
 	"github.com/wangaoone/redeo/resp"
 	"io"
 	"net"
+	"strconv"
 	"sync"
 )
 
@@ -48,7 +49,8 @@ func (c *Client) Dial(address string) {
 }
 
 func (c *Client) set(key string, val []byte, wg *sync.WaitGroup, i int) {
-	c.W[i].WriteCmdBulk("SET", key, val)
+	fmt.Println("id is ", strconv.Itoa(i))
+	c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
 	// Flush pipeline
 	if err := c.W[i].Flush(); err != nil {
 		panic(err)
@@ -64,61 +66,69 @@ func (c *Client) EcSet(key string, val []byte) {
 		fmt.Println("EcSet err", err)
 	}
 	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
-		fmt.Println("shards", i, "is", shards[i])
+		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
 		go c.set(key, shards[i], &wg, i)
 	}
 	wg.Wait()
-	fmt.Println("ecset all goroutines are done!")
+	fmt.Println("EcSet all goroutines are done!")
+}
+
+func (c *Client) get(key string, wg *sync.WaitGroup, i int) {
+	c.W[i].WriteCmdString("GET", key)
+	// Flush pipeline
+	if err := c.W[i].Flush(); err != nil {
+		panic(err)
+	}
+	fmt.Println("GET and flush finish")
+	wg.Done()
 }
 
 func (c *Client) EcGet(key string) {
-	//var wg sync.WaitGroup
-	//wg.Add(redeo.DataShards + redeo.ParityShards)
+	var wg sync.WaitGroup
 	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
-		//go func() {
-		c.W[i].WriteCmdString("GET", key)
-		// Flush pipeline
-		if err := c.W[i].Flush(); err != nil {
-			panic(err)
-		}
-		fmt.Println("GET and flush finish")
-		//wg.Done()
-		//res, err := c.R[i].PeekType()
-		//if err != nil {
-		//	fmt.Println("typeInt err", err)
-		//}
-		//fmt.Println(res)
-		//}()
+		wg.Add(1)
+		go c.get(key, &wg, i)
 	}
-	//wg.Wait()
+	wg.Wait()
+	fmt.Println("EcGet all goroutines are done!")
 }
 
-func (c *Client) rec(key string, val []byte) {
+func (c *Client) Receive() {
 	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
-		//go func() {
+		var id int64
+		var chunk []byte
 		// peeking response type and receive
-		t, err := c.R[i].PeekType()
+		// client id
+		t0, err := c.R[i].PeekType()
 		if err != nil {
 			fmt.Println("peekType err", err)
 			return
 		}
-		switch t {
+		switch t0 {
 		case resp.TypeInt:
-			res, err := c.R[i].ReadInt()
-			if err != nil {
-				fmt.Println("typeInt err", err)
-			}
-			fmt.Println(res)
-		case resp.TypeBulk:
-			res, err := c.R[i].ReadBulk(nil)
+			id, err = c.R[i].ReadInt()
 			if err != nil {
 				fmt.Println("typeBulk err", err)
 			}
-			fmt.Println(res)
 		default:
 			panic("unexpected response type")
 		}
-		//}()
+		// chunk
+		t1, err := c.R[i].PeekType()
+		if err != nil {
+			fmt.Println("peekType err", err)
+			return
+		}
+		switch t1 {
+		case resp.TypeBulk:
+			chunk, err = c.R[i].ReadBulk(nil)
+			if err != nil {
+				fmt.Println("typeBulk err", err)
+			}
+		default:
+			panic("unexpected response type")
+		}
+		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)] = chunk
 	}
 }
