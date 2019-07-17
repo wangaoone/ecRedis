@@ -1,6 +1,5 @@
 package ecRedis
 
-import "C"
 import (
 	"fmt"
 	"github.com/wangaoone/redeo"
@@ -46,17 +45,15 @@ func (c *Client) Dial(address string) {
 		go c.initialDial(address, &wg, i)
 	}
 	wg.Wait()
-	fmt.Println("dial all goroutines are done!")
+	fmt.Println("Dial all goroutines are done!")
 }
 
 func (c *Client) set(key string, val []byte, wg *sync.WaitGroup, i int) {
-	fmt.Println("id is ", strconv.Itoa(i))
 	c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
 	// Flush pipeline
 	if err := c.W[i].Flush(); err != nil {
 		panic(err)
 	}
-	fmt.Println("SET and flush finish")
 	wg.Done()
 
 }
@@ -81,7 +78,6 @@ func (c *Client) get(key string, wg *sync.WaitGroup, i int) {
 	if err := c.W[i].Flush(); err != nil {
 		panic(err)
 	}
-	fmt.Println("GET and flush finish")
 	wg.Done()
 }
 
@@ -96,7 +92,6 @@ func (c *Client) EcGet(key string) {
 }
 
 func (c *Client) rec(wg *sync.WaitGroup, i int) {
-	t := time.Now()
 	var id int64
 	// peeking response type and receive
 	// client id
@@ -106,7 +101,6 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 		return
 	}
 	fmt.Println("after 1st peektype len is", c.R[i].Buffered())
-	t1 := time.Since(t)
 
 	switch type0 {
 	case resp.TypeInt:
@@ -118,14 +112,15 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
-	t2 := time.Since(t)
 	// chunk
+	t0 := time.Now()
 	type1, err := c.R[i].PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	t3 := time.Since(t)
+	fmt.Println("client peek bulk time is ", time.Since(t0))
+	t1 := time.Now()
 	switch type1 {
 	case resp.TypeBulk:
 		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
@@ -135,9 +130,8 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
-	t4 := time.Since(t)
+	fmt.Println("client read bulk time is ", time.Since(t1))
 	wg.Done()
-	fmt.Println("go routine rec time is", t, t1, t2, t3, t4)
 }
 
 func (c *Client) Receive() {
