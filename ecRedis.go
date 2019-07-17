@@ -92,6 +92,7 @@ func (c *Client) EcGet(key string) {
 }
 
 func (c *Client) rec(wg *sync.WaitGroup, i int) {
+	t := time.Now()
 	var id int64
 	// peeking response type and receive
 	// client id
@@ -132,6 +133,7 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	}
 	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(redeo.DataShards+redeo.ParityShards))
 	wg.Done()
+	fmt.Println("get goroutine duration time is ", time.Since(t))
 }
 
 func (c *Client) Receive() {
