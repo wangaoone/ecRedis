@@ -130,7 +130,7 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
-	fmt.Println("client read bulk time is ", time.Since(t1))
+	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(redeo.DataShards+redeo.ParityShards))
 	wg.Done()
 }
 
