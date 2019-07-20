@@ -2,12 +2,14 @@ package ecRedis
 
 import (
 	"bytes"
+	"github.com/google/uuid"
 	"github.com/klauspost/reedsolomon"
 	"github.com/wangaoone/redeo/resp"
 	"net"
 )
 
 type Client struct {
+	id       uuid.UUID
 	ConnArr  []net.Conn
 	W        []*resp.RequestWriter
 	R        []resp.ResponseReader
@@ -16,12 +18,13 @@ type Client struct {
 	Rec      bytes.Buffer
 }
 
-func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
+func NewClient() Client {
 	return Client{
-		ConnArr:  make([]net.Conn, dataShards+parityShards),
-		W:        make([]*resp.RequestWriter, dataShards+parityShards),
-		R:        make([]resp.ResponseReader, dataShards+parityShards),
-		ChunkArr: make([][]byte, dataShards+parityShards),
-		EC:       NewEncoder(dataShards, parityShards, ecMaxGoroutine),
+		id:       uuid.New(),
+		ConnArr:  make([]net.Conn, DataShards+ParityShards),
+		W:        make([]*resp.RequestWriter, DataShards+ParityShards),
+		R:        make([]resp.ResponseReader, DataShards+ParityShards),
+		ChunkArr: make([][]byte, DataShards+ParityShards),
+		EC:       NewEncoder(DataShards, ParityShards, ECMaxGoroutine),
 	}
 }

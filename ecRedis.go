@@ -2,13 +2,20 @@ package ecRedis
 
 import (
 	"fmt"
-	"github.com/wangaoone/redeo"
 	"github.com/wangaoone/redeo/resp"
 	"io"
+	"math/rand"
 	"net"
 	"strconv"
 	"sync"
 	"time"
+)
+
+const (
+	DataShards      int = 2
+	ParityShards    int = 1
+	ECMaxGoroutine  int = 32
+	MaxLambdaStores int = 14
 )
 
 func NewRequestWriter(wr io.Writer) *resp.RequestWriter {
@@ -40,7 +47,7 @@ func (c *Client) initialDial(address string, wg *sync.WaitGroup, i int) {
 
 func (c *Client) Dial(address string) {
 	var wg sync.WaitGroup
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
 		go c.initialDial(address, &wg, i)
 	}
@@ -48,8 +55,12 @@ func (c *Client) Dial(address string) {
 	fmt.Println("Dial all goroutines are done!")
 }
 
-func (c *Client) set(key string, val []byte, wg *sync.WaitGroup, i int) {
-	c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
+func (c *Client) set(key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup) {
+	//
+	// set will write chunk id and client uuid to proxy
+	// cmd, key, client uuid, chunk id, destiny lambda store id, val
+	//
+	c.W[i].WriteCmdClient("SET", key, c.id.String(), strconv.Itoa(i), strconv.Itoa(lambdaId), val)
 	// Flush pipeline
 	if err := c.W[i].Flush(); err != nil {
 		panic(err)
@@ -59,21 +70,24 @@ func (c *Client) set(key string, val []byte, wg *sync.WaitGroup, i int) {
 }
 func (c *Client) EcSet(key string, val []byte) {
 	var wg sync.WaitGroup
+	// random generate destiny lambda store id
+	// return top (DataShards + ParityShards) lambda index
+	index := random(DataShards + ParityShards)
+	// prepare ec chunks
 	shards, err := Encoding(c.EC, val)
 	if err != nil {
 		fmt.Println("EcSet err", err)
 	}
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
-		//fmt.Println("shards", i, "is", shards[i])
+	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
-		go c.set(key, shards[i], &wg, i)
+		go c.set(key, shards[i], i, index[i], &wg)
 	}
 	wg.Wait()
 	fmt.Println("EcSet all goroutines are done!")
 }
 
 func (c *Client) get(key string, wg *sync.WaitGroup, i int) {
-	c.W[i].WriteCmdString("GET", key)
+	c.W[i].WriteCmdGet("GET", strconv.Itoa(i), key)
 	// Flush pipeline
 	if err := c.W[i].Flush(); err != nil {
 		panic(err)
@@ -83,7 +97,7 @@ func (c *Client) get(key string, wg *sync.WaitGroup, i int) {
 
 func (c *Client) EcGet(key string) {
 	var wg sync.WaitGroup
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
 		go c.get(key, &wg, i)
 	}
@@ -124,24 +138,31 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	t1 := time.Now()
 	switch type1 {
 	case resp.TypeBulk:
-		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
+		c.ChunkArr[int(id)%(DataShards+ParityShards)], err = c.R[i].ReadBulk(nil)
 		if err != nil {
 			fmt.Println("typeBulk err", err)
 		}
 	default:
 		panic("unexpected response type")
 	}
-	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(redeo.DataShards+redeo.ParityShards))
+	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(DataShards+ParityShards))
 	wg.Done()
-	fmt.Println("get goroutine duration time is ", time.Since(t))
+	fmt.Println("receive goroutine duration time is ", time.Since(t))
 }
 
 func (c *Client) Receive() {
 	var wg sync.WaitGroup
-	for i := 0; i < redeo.DataShards; i++ {
+	for i := 0; i < DataShards; i++ {
 		wg.Add(1)
 		go c.rec(&wg, i)
 	}
 	wg.Wait()
 	fmt.Println("EcReceive all goroutines are done!")
+}
+
+// random will generate random sequence within the lambda stores index
+// and get top n id
+func random(n int) []int {
+	r := rand.New(rand.NewSource(time.Now().Unix()))
+	return r.Perm(14)[:n]
 }
