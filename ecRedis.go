@@ -87,7 +87,7 @@ func (c *Client) EcSet(key string, val []byte) {
 }
 
 func (c *Client) get(key string, wg *sync.WaitGroup, i int) {
-	c.W[i].WriteCmdGet("GET", strconv.Itoa(i), key)
+	c.W[i].WriteCmdGet("GET", key, strconv.Itoa(i))
 	// Flush pipeline
 	if err := c.W[i].Flush(); err != nil {
 		panic(err)
