@@ -118,7 +118,6 @@ func random(n int) []int {
 }
 
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup, reqId string) {
-	fmt.Println("target lambda is ", lambdaId)
 	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
 	//c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
 	c.Conns[addr][i].W.WriteCmdClient("SET", key, strconv.Itoa(i), strconv.Itoa(lambdaId), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards), val) // key chunkId lambdaId reqId val
