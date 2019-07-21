@@ -220,7 +220,7 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
 
 	switch type0 {
-	case resp.TypeBulk:
+	case resp.TypeInt:
 		id, err = c.Conns[addr][i].R.ReadInt()
 		//id, err = c.Conns[addr][i].R.ReadBulkString()
 		if err != nil {
