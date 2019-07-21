@@ -8,6 +8,7 @@ import (
 	"github.com/wangaoone/redeo"
 	"github.com/wangaoone/redeo/resp"
 	"io"
+	"math/rand"
 	//"math/rand"
 	"net"
 	"strconv"
@@ -102,9 +103,17 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 	return "", false
 }
 
-func (c *Client) set(addr string, key string, val []byte, wg *sync.WaitGroup, i int) {
+// random will generate random sequence within the lambda stores
+// index and get top n id
+func random(n int) []int {
+	r := rand.New(rand.NewSource(time.Now().Unix()))
+	return r.Perm(14)[:n]
+}
+
+func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup) {
 	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
+	//c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
+	c.Conns[addr][i].W.WriteCmdClient("SET", key, c.id.String(), strconv.Itoa(i), strconv.Itoa(lambdaId), val)
 	//c.Conns[addr][i].W.WriteCmdBulkRedis("SET", key, val)
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
@@ -116,6 +125,10 @@ func (c *Client) set(addr string, key string, val []byte, wg *sync.WaitGroup, i 
 
 func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	var wg sync.WaitGroup
+
+	// randomly generate destiny lambda store id
+	// return top (DataShards + ParityShards) lambda index
+	index := random(DataShards + ParityShards)
 
 	//addr, ok := c.getHost(key)
 	fmt.Println("in SET, key is: ", key)
@@ -148,7 +161,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], &wg, i)
+		go c.set(host, key, shards[i], i, index[i], &wg)
 	}
 	wg.Wait()
 	fmt.Println("EcSet all goroutines are done!")
@@ -159,7 +172,8 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 
 func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int) {
 	//c.W[i].WriteCmdString("GET", key)
-	c.Conns[addr][i].W.WriteCmdString("GET", key)
+	//c.Conns[addr][i].W.WriteCmdString("GET", key)
+	c.Conns[addr][i].W.WriteCmdGet("GET", key, strconv.Itoa(i))
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {

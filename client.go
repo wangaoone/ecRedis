@@ -3,10 +3,17 @@ package ecRedis
 import (
 	"bytes"
 	"github.com/buraksezer/consistent"
+	"github.com/google/uuid"
 	"github.com/klauspost/reedsolomon"
 	"github.com/seiflotfy/cuckoofilter"
 	"github.com/wangaoone/redeo/resp"
 	"net"
+)
+
+var (
+	DataShards     int
+	ParityShards   int
+	ECMaxGoroutine int
 )
 
 type Conn struct {
@@ -19,6 +26,7 @@ type Client struct {
 	//ConnArr  []net.Conn
 	//W        []*resp.RequestWriter
 	//R        []resp.ResponseReader
+	id           uuid.UUID
 	Conns        map[string][]Conn
 	ChunkArr     [][]byte
 	EC           reedsolomon.Encoder
@@ -28,13 +36,17 @@ type Client struct {
 }
 
 func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
+	DataShards = dataShards
+	ParityShards = parityShards
+	ECMaxGoroutine = ecMaxGoroutine
 	return Client{
 		//ConnArr:  make([]net.Conn, dataShards+parityShards),
 		//W:        make([]*resp.RequestWriter, dataShards+parityShards),
 		//R:        make([]resp.ResponseReader, dataShards+parityShards),
+		id:           uuid.New(),
 		Conns:        make(map[string][]Conn),
-		ChunkArr:     make([][]byte, dataShards+parityShards),
-		EC:           NewEncoder(dataShards, parityShards, ecMaxGoroutine),
+		ChunkArr:     make([][]byte, DataShards+ParityShards),
+		EC:           NewEncoder(DataShards, ParityShards, ECMaxGoroutine),
 		MappingTable: make(map[string]*cuckoo.Filter),
 	}
 }
