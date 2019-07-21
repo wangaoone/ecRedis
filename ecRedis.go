@@ -12,9 +12,6 @@ import (
 )
 
 const (
-	DataShards      int = 2
-	ParityShards    int = 1
-	ECMaxGoroutine  int = 32
 	MaxLambdaStores int = 14
 )
 

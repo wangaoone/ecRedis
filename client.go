@@ -8,6 +8,12 @@ import (
 	"net"
 )
 
+var (
+	DataShards     int
+	ParityShards   int
+	ECMaxGoroutine int
+)
+
 type Client struct {
 	id       uuid.UUID
 	ConnArr  []net.Conn
@@ -18,7 +24,10 @@ type Client struct {
 	Rec      bytes.Buffer
 }
 
-func NewClient() Client {
+func NewClient(d int, p int, max int) Client {
+	DataShards = d
+	ParityShards = p
+	ECMaxGoroutine = max
 	return Client{
 		id:       uuid.New(),
 		ConnArr:  make([]net.Conn, DataShards+ParityShards),
