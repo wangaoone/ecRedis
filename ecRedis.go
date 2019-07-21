@@ -5,7 +5,6 @@ import (
 	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
 	"github.com/seiflotfy/cuckoofilter"
-	"github.com/wangaoone/redeo"
 	"github.com/wangaoone/redeo/resp"
 	"io"
 	"math/rand"
@@ -14,6 +13,10 @@ import (
 	"strconv"
 	"sync"
 	"time"
+)
+
+const (
+	MaxLambdaStores int = 14
 )
 
 type Member string
@@ -47,8 +50,8 @@ func dial(address string) (net.Conn, error) {
 //func (c *Client) initDial(address string, wg *sync.WaitGroup) {
 func (c *Client) initDial(address string) {
 	// initialize parallel connections under address
-	tmp := make([]Conn, redeo.DataShards+redeo.ParityShards)
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+	tmp := make([]Conn, DataShards+ParityShards)
+	for i := 0; i < DataShards+ParityShards; i++ {
 		cn, err := dial(address)
 		if err != nil {
 			fmt.Println("dial err is ", err)
@@ -65,7 +68,6 @@ func (c *Client) initDial(address string) {
 
 func (c *Client) Dial(addrArr []string) {
 	members := []consistent.Member{}
-	//for i := 0; i < 8; i++ {
 	for _, host := range addrArr {
 		member := Member(host)
 		members = append(members, member)
@@ -107,7 +109,7 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 // index and get top n id
 func random(n int) []int {
 	r := rand.New(rand.NewSource(time.Now().Unix()))
-	return r.Perm(14)[:n]
+	return r.Perm(MaxLambdaStores)[:n]
 }
 
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup) {
@@ -158,7 +160,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 		fmt.Println("EcSet err", err)
 	}
 
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+	for i := 0; i < DataShards+ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
 		go c.set(host, key, shards[i], i, index[i], &wg)
@@ -192,7 +194,7 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	fmt.Println("ring LocateKey costs:", time.Since(t))
 	fmt.Println("GET located host: ", host)
 
-	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
 		go c.get(host, key, &wg, i)
 	}
@@ -241,21 +243,21 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	switch type1 {
 	case resp.TypeBulk:
 		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
-		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.Conns[addr][i].R.ReadBulk(nil)
+		c.ChunkArr[int(id)%(DataShards+ParityShards)], err = c.Conns[addr][i].R.ReadBulk(nil)
 		if err != nil {
 			fmt.Println("typeBulk err", err)
 		}
 	default:
 		panic("unexpected response type")
 	}
-	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(redeo.DataShards+redeo.ParityShards))
+	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(DataShards+ParityShards))
 	wg.Done()
 	fmt.Println("get goroutine duration time is ", time.Since(t))
 }
 
 func (c *Client) Receive(addr string) {
 	var wg sync.WaitGroup
-	for i := 0; i < redeo.DataShards; i++ {
+	for i := 0; i < DataShards; i++ {
 		wg.Add(1)
 		go c.rec(addr, &wg, i)
 	}
