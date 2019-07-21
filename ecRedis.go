@@ -254,7 +254,6 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 		if err != nil {
 			fmt.Println("to Int", err)
 		}
-		fmt.Println("chunkId is ", chunkId)
 		if chunkId == -1 {
 			wg.Done()
 			fmt.Println("receive enough chunks")
