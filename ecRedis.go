@@ -2,21 +2,30 @@ package ecRedis
 
 import (
 	"fmt"
+	"github.com/buraksezer/consistent"
+	"github.com/cespare/xxhash"
+	"github.com/seiflotfy/cuckoofilter"
+	"github.com/wangaoone/redeo"
 	"github.com/wangaoone/redeo/resp"
 	"io"
-	"math/rand"
+	//"math/rand"
 	"net"
 	"strconv"
 	"sync"
 	"time"
 )
 
-const (
-	DataShards      int = 2
-	ParityShards    int = 1
-	ECMaxGoroutine  int = 32
-	MaxLambdaStores int = 14
-)
+type Member string
+
+func (m Member) String() string {
+	return string(m)
+}
+
+type hasher struct{}
+
+func (h hasher) Sum64(data []byte) uint64 {
+	return xxhash.Sum64(data)
+}
 
 func NewRequestWriter(wr io.Writer) *resp.RequestWriter {
 	return resp.NewRequestWriter(wr)
@@ -34,94 +43,172 @@ func dial(address string) (net.Conn, error) {
 	return cn, err
 }
 
-func (c *Client) initialDial(address string, wg *sync.WaitGroup, i int) {
-	cn, err := dial(address)
-	if err != nil {
-		fmt.Println("dial err is ", err)
+//func (c *Client) initDial(address string, wg *sync.WaitGroup) {
+func (c *Client) initDial(address string) {
+	// initialize parallel connections under address
+	tmp := make([]Conn, redeo.DataShards+redeo.ParityShards)
+	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+		cn, err := dial(address)
+		if err != nil {
+			fmt.Println("dial err is ", err)
+		}
+		tmp[i].conn = cn
+		tmp[i].W = NewRequestWriter(cn)
+		tmp[i].R = NewResponseReader(cn)
+		c.Conns[address] = tmp
 	}
-	c.ConnArr[i] = cn
-	c.W[i] = NewRequestWriter(cn)
-	c.R[i] = NewResponseReader(cn)
-	wg.Done()
+
+	// initialize the cuckoo filter under address
+	c.MappingTable[address] = cuckoo.NewFilter(1000000)
 }
 
-func (c *Client) Dial(address string) {
-	var wg sync.WaitGroup
-	for i := 0; i < DataShards+ParityShards; i++ {
-		wg.Add(1)
-		go c.initialDial(address, &wg, i)
+func (c *Client) Dial(addrArr []string) {
+	members := []consistent.Member{}
+	//for i := 0; i < 8; i++ {
+	for _, host := range addrArr {
+		member := Member(host)
+		members = append(members, member)
 	}
-	wg.Wait()
+	//cfg := consistent.Config{
+	//	PartitionCount:    271,
+	//	ReplicationFactor: 20,
+	//	Load:              1.25,
+	//	Hasher:            hasher{},
+	//}
+	cfg := consistent.Config{
+		PartitionCount:    271,
+		ReplicationFactor: 20,
+		Load:              1.25,
+		Hasher:            hasher{},
+	}
+	c.Ring = consistent.New(members, cfg)
+	for _, addr := range addrArr {
+		fmt.Println("to dial to: ", addr)
+		c.initDial(addr)
+	}
+
 	fmt.Println("Dial all goroutines are done!")
 }
 
-func (c *Client) set(key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup) {
-	//
-	// set will write chunk id and client uuid to proxy
-	// cmd, key, client uuid, chunk id, destiny lambda store id, val
-	//
-	c.W[i].WriteCmdClient("SET", key, c.id.String(), strconv.Itoa(i), strconv.Itoa(lambdaId), val)
+func (c *Client) getHost(key string) (addr string, ok bool) {
+	// linear search through all filters and locate the one that holds the key
+	for addr, filter := range c.MappingTable {
+		found := filter.Lookup([]byte(key))
+		if found { // if found, return the address
+			return addr, true
+		}
+	}
+	// otherwise, return nil
+	return "", false
+}
+
+func (c *Client) set(addr string, key string, val []byte, wg *sync.WaitGroup, i int) {
+	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
+	c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
+	//c.Conns[addr][i].W.WriteCmdBulkRedis("SET", key, val)
 	// Flush pipeline
-	if err := c.W[i].Flush(); err != nil {
+	//if err := c.W[i].Flush(); err != nil {
+	if err := c.Conns[addr][i].W.Flush(); err != nil {
 		panic(err)
 	}
 	wg.Done()
-
 }
-func (c *Client) EcSet(key string, val []byte) {
+
+func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	var wg sync.WaitGroup
-	// random generate destiny lambda store id
-	// return top (DataShards + ParityShards) lambda index
-	index := random(DataShards + ParityShards)
-	// prepare ec chunks
+
+	//addr, ok := c.getHost(key)
+	fmt.Println("in SET, key is: ", key)
+	t := time.Now()
+	member := c.Ring.LocateKey([]byte(key))
+	host := member.String()
+	fmt.Println("ring LocateKey costs:", time.Since(t))
+	/*
+		if ok == false {
+			i := rand.Intn(len(c.MappingTable))
+			// this means that the key does not exist in lambda store
+			for a, _ := range c.MappingTable {
+				if i == 0 {
+					addr = a
+					// don't forget to insert the non-existing key
+					c.MappingTable[addr].InsertUnique([]byte(key))
+					break
+				}
+				i--
+			}
+			fmt.Println("Failed to locate one host: randomly pick one: ", addr)
+		}*/
+	fmt.Println("SET located host: ", host)
+
 	shards, err := Encoding(c.EC, val)
 	if err != nil {
 		fmt.Println("EcSet err", err)
 	}
-	for i := 0; i < DataShards+ParityShards; i++ {
+
+	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
+		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(key, shards[i], i, index[i], &wg)
+		go c.set(host, key, shards[i], &wg, i)
 	}
 	wg.Wait()
 	fmt.Println("EcSet all goroutines are done!")
+
+	// FIXME: dirty design which leaks abstraction to the user
+	return host, true
 }
 
-func (c *Client) get(key string, wg *sync.WaitGroup, i int) {
-	c.W[i].WriteCmdGet("GET", strconv.Itoa(i), key)
+func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int) {
+	//c.W[i].WriteCmdString("GET", key)
+	c.Conns[addr][i].W.WriteCmdString("GET", key)
 	// Flush pipeline
-	if err := c.W[i].Flush(); err != nil {
+	//if err := c.W[i].Flush(); err != nil {
+	if err := c.Conns[addr][i].W.Flush(); err != nil {
 		panic(err)
 	}
 	wg.Done()
 }
 
-func (c *Client) EcGet(key string) {
+func (c *Client) EcGet(key string) (addr string, ok bool) {
 	var wg sync.WaitGroup
-	for i := 0; i < DataShards+ParityShards; i++ {
+
+	//addr, ok := c.getHost(key)
+	t := time.Now()
+	member := c.Ring.LocateKey([]byte(key))
+	host := member.String()
+	fmt.Println("ring LocateKey costs:", time.Since(t))
+	fmt.Println("GET located host: ", host)
+
+	for i := 0; i < redeo.DataShards+redeo.ParityShards; i++ {
 		wg.Add(1)
-		go c.get(key, &wg, i)
+		go c.get(host, key, &wg, i)
 	}
 	wg.Wait()
 	fmt.Println("EcGet all goroutines are done!")
+
+	// FIXME: dirty design which leaks abstraction to the user
+	return host, true
 }
 
-func (c *Client) rec(wg *sync.WaitGroup, i int) {
+func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	t := time.Now()
 	var id int64
 	// peeking response type and receive
 	// client id
-	type0, err := c.R[i].PeekType()
+	//type0, err := c.R[i].PeekType()
+	type0, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	fmt.Println("after 1st peektype len is", c.R[i].Buffered())
+	//fmt.Println("after 1st peektype len is", c.R[i].Buffered())
+	fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
 
 	switch type0 {
-	case resp.TypeInt:
-		id, err = c.R[i].ReadInt()
+	case resp.TypeBulk:
+		id, err = c.Conns[addr][i].R.ReadInt()
+		//id, err = c.Conns[addr][i].R.ReadBulkString()
 		if err != nil {
-			fmt.Println("typeBulk err", err)
+			fmt.Println("typeBulkString err", err)
 		}
 		fmt.Println("id is ", id)
 	default:
@@ -129,7 +216,8 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	}
 	// chunk
 	t0 := time.Now()
-	type1, err := c.R[i].PeekType()
+	//type1, err := c.R[i].PeekType()
+	type1, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
@@ -138,31 +226,25 @@ func (c *Client) rec(wg *sync.WaitGroup, i int) {
 	t1 := time.Now()
 	switch type1 {
 	case resp.TypeBulk:
-		c.ChunkArr[int(id)%(DataShards+ParityShards)], err = c.R[i].ReadBulk(nil)
+		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
+		c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.Conns[addr][i].R.ReadBulk(nil)
 		if err != nil {
 			fmt.Println("typeBulk err", err)
 		}
 	default:
 		panic("unexpected response type")
 	}
-	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(DataShards+ParityShards))
+	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(redeo.DataShards+redeo.ParityShards))
 	wg.Done()
-	fmt.Println("receive goroutine duration time is ", time.Since(t))
+	fmt.Println("get goroutine duration time is ", time.Since(t))
 }
 
-func (c *Client) Receive() {
+func (c *Client) Receive(addr string) {
 	var wg sync.WaitGroup
-	for i := 0; i < DataShards; i++ {
+	for i := 0; i < redeo.DataShards; i++ {
 		wg.Add(1)
-		go c.rec(&wg, i)
+		go c.rec(addr, &wg, i)
 	}
 	wg.Wait()
 	fmt.Println("EcReceive all goroutines are done!")
-}
-
-// random will generate random sequence within the lambda stores index
-// and get top n id
-func random(n int) []int {
-	r := rand.New(rand.NewSource(time.Now().Unix()))
-	return r.Perm(14)[:n]
 }
