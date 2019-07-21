@@ -1,7 +1,6 @@
 package ecRedis
 
 import (
-	"bytes"
 	"fmt"
 	"github.com/klauspost/reedsolomon"
 )
@@ -32,7 +31,8 @@ func Encoding(encoder reedsolomon.Encoder, obj []byte) ([][]byte, error) {
 	return shards, err
 }
 
-func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
+//func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
+func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
 	ok, err := encoder.Verify(data)
 	if ok {
 		fmt.Println("No reconstruction needed")
@@ -51,12 +51,14 @@ func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (by
 		}
 		fmt.Println(ok)
 	}
+
+	return err
 	// output
-	var res bytes.Buffer
+	//var res bytes.Buffer
 	//err = encoder.Join(&res, data, fileSize)
 	//if err != nil {
 	//	fmt.Println(err)
 	//}
 	//fmt.Println("decode val len is ", len(res.Bytes()))
-	return res, err
+	//return res, err
 }
