@@ -173,6 +173,8 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 }
 
 func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int) {
+	tGet := time.Now()
+	fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
 	//c.W[i].WriteCmdString("GET", key)
 	//c.Conns[addr][i].W.WriteCmdString("GET", key)
 	c.Conns[addr][i].W.WriteCmdGet("GET", key, strconv.Itoa(i))
@@ -206,19 +208,21 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 }
 
 func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
-	t := time.Now()
+	t0 := time.Now()
 	var id int64
 	// peeking response type and receive
-	// client id
+	// chunk id
 	//type0, err := c.R[i].PeekType()
+	t1 := time.Now()
 	type0, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
+	time1 := time.Since(t1)
 	//fmt.Println("after 1st peektype len is", c.R[i].Buffered())
-	fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
-
+	//fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
+	t2 := time.Now()
 	switch type0 {
 	case resp.TypeInt:
 		id, err = c.Conns[addr][i].R.ReadInt()
@@ -230,16 +234,17 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
+	time2 := time.Since(t2)
 	// chunk
-	t0 := time.Now()
+	t3 := time.Now()
 	//type1, err := c.R[i].PeekType()
 	type1, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	fmt.Println("client peek bulk time is ", time.Since(t0))
-	t1 := time.Now()
+	time3 := time.Since(t3)
+	t4 := time.Now()
 	switch type1 {
 	case resp.TypeBulk:
 		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
@@ -250,9 +255,16 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
-	fmt.Println("client read bulk time is ", time.Since(t1), "chunk id is", int(id)%(DataShards+ParityShards))
+	time4 := time.Since(t4)
+	time0 := time.Since(t0)
+	fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
+		"Client send RECEIVE req timeStamp", t0,
+		"Client Peek ChunkId time is", time1,
+		"Client read ChunkId time is ", time2,
+		"Client Peek chunkBody time is", time3,
+		"Client read chunkBody time is", time4,
+		"RECEIVE goroutine duration time is ", time0)
 	wg.Done()
-	fmt.Println("get goroutine duration time is ", time.Since(t))
 }
 
 func (c *Client) Receive(addr string) {
