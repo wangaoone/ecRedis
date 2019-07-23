@@ -3,6 +3,7 @@ package ecRedis
 import (
 	"fmt"
 	"github.com/klauspost/reedsolomon"
+	"time"
 )
 
 func NewEncoder(DataShards int, ParityShards int, ECMaxGoroutine int) reedsolomon.Encoder {
@@ -33,6 +34,7 @@ func Encoding(encoder reedsolomon.Encoder, obj []byte) ([][]byte, error) {
 
 //func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
 func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
+	t := time.Now()
 	ok, err := encoder.Verify(data)
 	if ok {
 		fmt.Println("No reconstruction needed")
@@ -49,9 +51,8 @@ func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
 		if err != nil {
 			fmt.Println(err)
 		}
-		fmt.Println(ok)
 	}
-
+	fmt.Println("Data status is", ok, "Decoding time is", time.Since(t))
 	return err
 	// output
 	//var res bytes.Buffer
