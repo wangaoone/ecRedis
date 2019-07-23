@@ -3,7 +3,6 @@ package ecRedis
 import (
 	"bytes"
 	"github.com/buraksezer/consistent"
-	"github.com/google/uuid"
 	"github.com/klauspost/reedsolomon"
 	"github.com/seiflotfy/cuckoofilter"
 	"github.com/wangaoone/redeo/resp"
@@ -26,7 +25,6 @@ type Client struct {
 	//ConnArr  []net.Conn
 	//W        []*resp.RequestWriter
 	//R        []resp.ResponseReader
-	id           uuid.UUID
 	Conns        map[string][]Conn
 	ChunkArr     [][]byte
 	EC           reedsolomon.Encoder
@@ -43,7 +41,6 @@ func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
 		//ConnArr:  make([]net.Conn, dataShards+parityShards),
 		//W:        make([]*resp.RequestWriter, dataShards+parityShards),
 		//R:        make([]resp.ResponseReader, dataShards+parityShards),
-		id:           uuid.New(),
 		Conns:        make(map[string][]Conn),
 		ChunkArr:     make([][]byte, DataShards+ParityShards),
 		EC:           NewEncoder(DataShards, ParityShards, ECMaxGoroutine),

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
+	"github.com/google/uuid"
 	"github.com/seiflotfy/cuckoofilter"
 	"github.com/wangaoone/redeo/resp"
 	"io"
@@ -112,10 +113,10 @@ func random(n int) []int {
 	return r.Perm(MaxLambdaStores)[:n]
 }
 
-func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup) {
+func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup, reqId string) {
 	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
 	//c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	c.Conns[addr][i].W.WriteCmdClient("SET", key, c.id.String(), strconv.Itoa(i), strconv.Itoa(lambdaId), val)
+	c.Conns[addr][i].W.WriteCmdClient("SET", key, strconv.Itoa(i), strconv.Itoa(lambdaId), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards), val) // key chunkId lambdaId reqId val
 	//c.Conns[addr][i].W.WriteCmdBulkRedis("SET", key, val)
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
@@ -159,11 +160,11 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	if err != nil {
 		fmt.Println("EcSet err", err)
 	}
-
+	reqId := uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], &wg)
+		go c.set(host, key, shards[i], i, index[i], &wg, reqId)
 	}
 	wg.Wait()
 	fmt.Println("EcSet all goroutines are done!")
@@ -172,12 +173,12 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	return host, true
 }
 
-func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int) {
+func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int, reqId string) {
 	tGet := time.Now()
 	fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
 	//c.W[i].WriteCmdString("GET", key)
 	//c.Conns[addr][i].W.WriteCmdString("GET", key)
-	c.Conns[addr][i].W.WriteCmdGet("GET", key, strconv.Itoa(i))
+	c.Conns[addr][i].W.WriteCmdString("GET", key, strconv.Itoa(i), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards)) // cmd key chunkId reqId DataShards ParityShards
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {
@@ -195,10 +196,10 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	host := member.String()
 	fmt.Println("ring LocateKey costs:", time.Since(t))
 	fmt.Println("GET located host: ", host)
-
+	reqId := uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
-		go c.get(host, key, &wg, i)
+		go c.get(host, key, &wg, i, reqId)
 	}
 	wg.Wait()
 	fmt.Println("EcGet all goroutines are done!")
