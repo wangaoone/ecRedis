@@ -254,7 +254,7 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	switch type1 {
 	case resp.TypeBulk:
 		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
-		c.ChunkArr[int(id)%(DataShards+ParityShards)], err = c.Conns[addr][i].R.ReadBulk(nil)
+		c.ChunkArr[int(id)], err = c.Conns[addr][i].R.ReadBulk(nil)
 		if err != nil {
 			fmt.Println("typeBulk err", err)
 		}
@@ -281,4 +281,9 @@ func (c *Client) Receive(addr string) {
 	}
 	wg.Wait()
 	fmt.Println("EcReceive all goroutines are done!")
+	for i := range c.ChunkArr {
+		if c.ChunkArr[i] == nil {
+			fmt.Println("index", i, "in chunkArr is nil")
+		}
+	}
 }
