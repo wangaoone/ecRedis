@@ -232,6 +232,11 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 			fmt.Println("typeBulkString err", err)
 		}
 		fmt.Println("id is ", id)
+		if id == -1 {
+			wg.Done()
+			fmt.Println("receive enough chunks")
+			return
+		}
 	default:
 		panic("unexpected response type")
 	}
@@ -258,6 +263,7 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	}
 	time4 := time.Since(t4)
 	time0 := time.Since(t0)
+	wg.Done()
 	fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
 		"Client send RECEIVE req timeStamp", t0,
 		"Client Peek ChunkId time is", time1,
@@ -265,12 +271,11 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 		"Client Peek chunkBody time is", time3,
 		"Client read chunkBody time is", time4,
 		"RECEIVE goroutine duration time is ", time0)
-	wg.Done()
 }
 
 func (c *Client) Receive(addr string) {
 	var wg sync.WaitGroup
-	for i := 0; i < DataShards; i++ {
+	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
 		go c.rec(addr, &wg, i)
 	}
