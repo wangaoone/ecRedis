@@ -209,6 +209,7 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 }
 
 func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
+	c.ChunkArr[i] = nil
 	t0 := time.Now()
 	var id int64
 	// peeking response type and receive
