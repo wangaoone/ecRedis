@@ -281,9 +281,5 @@ func (c *Client) Receive(addr string) {
 	}
 	wg.Wait()
 	fmt.Println("EcReceive all goroutines are done!")
-	for i := range c.ChunkArr {
-		if c.ChunkArr[i] == nil {
-			fmt.Println("index", i, "in chunkArr is nil")
-		}
-	}
+
 }

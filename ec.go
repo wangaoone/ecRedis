@@ -34,6 +34,13 @@ func Encoding(encoder reedsolomon.Encoder, obj []byte) ([][]byte, error) {
 
 //func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
 func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
+	counter := 0
+	for i := range data {
+		if data[i] == nil {
+			counter += 1
+		}
+	}
+	fmt.Println("Client chunkArr nil index is", counter)
 	t := time.Now()
 	ok, err := encoder.Verify(data)
 	if ok {
