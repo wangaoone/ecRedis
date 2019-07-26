@@ -2,6 +2,7 @@ package ecRedis
 
 import (
 	"fmt"
+	"github.com/ScottMansfield/nanolog"
 	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
@@ -9,7 +10,6 @@ import (
 	"github.com/wangaoone/redeo/resp"
 	"io"
 	"math/rand"
-	//"math/rand"
 	"net"
 	"strconv"
 	"sync"
@@ -68,6 +68,7 @@ func (c *Client) initDial(address string) {
 }
 
 func (c *Client) Dial(addrArr []string) {
+	t0 := time.Now()
 	members := []consistent.Member{}
 	for _, host := range addrArr {
 		member := Member(host)
@@ -90,8 +91,11 @@ func (c *Client) Dial(addrArr []string) {
 		fmt.Println("to dial to: ", addr)
 		c.initDial(addr)
 	}
-
-	fmt.Println("Dial all goroutines are done!")
+	time0 := time.Since(t0)
+	//fmt.Println("Dial all goroutines are done!")
+	if err := nanolog.Log(LogClient, "Dial", time0.String()); err != nil {
+		fmt.Println(err)
+	}
 }
 
 func (c *Client) getHost(key string) (addr string, ok bool) {
@@ -127,6 +131,7 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, w
 }
 
 func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
+	t0 := time.Now()
 	var wg sync.WaitGroup
 
 	// randomly generate destiny lambda store id
@@ -167,8 +172,11 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 		go c.set(host, key, shards[i], i, index[i], &wg, reqId)
 	}
 	wg.Wait()
-	fmt.Println("EcSet all goroutines are done!")
-
+	time0 := time.Since(t0)
+	//fmt.Println("EcSet all goroutines are done!")
+	if err := nanolog.Log(LogClient, "EcSet", time0.String()); err != nil {
+		fmt.Println(err)
+	}
 	// FIXME: dirty design which leaks abstraction to the user
 	return host, true
 }
@@ -188,6 +196,7 @@ func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int, reqId s
 }
 
 func (c *Client) EcGet(key string) (addr string, ok bool) {
+	t0 := time.Now()
 	var wg sync.WaitGroup
 
 	//addr, ok := c.getHost(key)
@@ -202,8 +211,11 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 		go c.get(host, key, &wg, i, reqId)
 	}
 	wg.Wait()
-	fmt.Println("EcGet all goroutines are done!")
-
+	//fmt.Println("EcGet all goroutines are done!")
+	time0 := time.Since(t0)
+	if err := nanolog.Log(LogClient, "EcGet", time0.String()); err != nil {
+		fmt.Println(err)
+	}
 	// FIXME: dirty design which leaks abstraction to the user
 	return host, true
 }
@@ -265,22 +277,31 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	time4 := time.Since(t4)
 	time0 := time.Since(t0)
 	wg.Done()
-	fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
-		"Client send RECEIVE req timeStamp", t0,
-		"Client Peek ChunkId time is", time1,
-		"Client read ChunkId time is ", time2,
-		"Client Peek chunkBody time is", time3,
-		"Client read chunkBody time is", time4,
-		"RECEIVE goroutine duration time is ", time0)
+	//fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
+	//	"Client send RECEIVE req timeStamp", t0,
+	//	"Client Peek ChunkId time is", time1,
+	//	"Client read ChunkId time is ", time2,
+	//	"Client Peek chunkBody time is", time3,
+	//	"Client read chunkBody time is", time4,
+	//	"RECEIVE goroutine duration time is ", time0)
+	if err := nanolog.Log(LogRec, int(id)%(DataShards+ParityShards), t0.String(), time1.String(), time2.String(),
+		time3.String(), time4.String(), time0.String()); err != nil {
+		fmt.Println(err)
+	}
 }
 
 func (c *Client) Receive(addr string) {
+	t0 := time.Now()
 	var wg sync.WaitGroup
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
 		go c.rec(addr, &wg, i)
 	}
 	wg.Wait()
-	fmt.Println("EcReceive all goroutines are done!")
+	time0 := time.Since(t0)
+	//fmt.Println("EcReceive all goroutines are done!")
+	if err := nanolog.Log(LogClient, "EcReceive", time0.String()); err != nil {
+		fmt.Println(err)
+	}
 
 }

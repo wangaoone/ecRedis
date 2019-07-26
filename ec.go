@@ -2,6 +2,7 @@ package ecRedis
 
 import (
 	"fmt"
+	"github.com/ScottMansfield/nanolog"
 	"github.com/klauspost/reedsolomon"
 	"time"
 )
@@ -28,20 +29,23 @@ func Encoding(encoder reedsolomon.Encoder, obj []byte) ([][]byte, error) {
 		return nil, err
 	}
 	ok, err := encoder.Verify(shards)
-	fmt.Println("verify status is ", ok)
+	if ok == false {
+		panic("encoding failed")
+	}
+	fmt.Println("encoding verify status is ", ok)
 	return shards, err
 }
 
 //func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
 func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
-	counter := 0
-	for i := range data {
-		if data[i] == nil {
-			counter += 1
-		}
-	}
-	fmt.Println("Client chunkArr nil index is", counter)
-	t := time.Now()
+	//counter := 0
+	//for i := range data {
+	//	if data[i] == nil {
+	//		counter += 1
+	//	}
+	//}
+	//fmt.Println("Client chunkArr nil index is", counter)
+	t0 := time.Now()
 	ok, err := encoder.Verify(data)
 	if ok {
 		fmt.Println("No reconstruction needed")
@@ -59,7 +63,12 @@ func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
 			fmt.Println(err)
 		}
 	}
-	fmt.Println("Data status is", ok, "Decoding time is", time.Since(t))
+	time0 := time.Since(t0)
+	//fmt.Println("Data status is", ok, "Decoding time is", time.Since(t))
+	if err := nanolog.Log(LogDec, ok, time0.String()); err != nil {
+		fmt.Println("decoding log err", err)
+	}
+	fmt.Println(ok)
 	return err
 	// output
 	//var res bytes.Buffer
