@@ -165,11 +165,11 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	if err != nil {
 		fmt.Println("EcSet err", err)
 	}
-	c.ReqId = uuid.New().String()
+	c.Data.SetReqId = uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], &wg, c.ReqId)
+		go c.set(host, key, shards[i], i, index[i], &wg, c.Data.SetReqId)
 	}
 	wg.Wait()
 	time0 := time.Since(t0)
@@ -177,7 +177,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	//if err := nanolog.Log(LogClient, "EcSet", time0.String()); err != nil {
 	//	fmt.Println(err)
 	//}
-	c.DataEntry.SetLatency = int64(time0)
+	c.Data.SetLatency = int64(time0)
 	// FIXME: dirty design which leaks abstraction to the user
 	return host, true
 }
@@ -206,10 +206,10 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	host := member.String()
 	fmt.Println("ring LocateKey costs:", time.Since(t))
 	fmt.Println("GET located host: ", host)
-	c.GetReqId = uuid.New().String()
+	c.Data.GetReqId = uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
-		go c.get(host, key, &wg, i, c.GetReqId)
+		go c.get(host, key, &wg, i, c.Data.GetReqId)
 	}
 	wg.Wait()
 	//fmt.Println("EcGet all goroutines are done!")
@@ -217,7 +217,7 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	//if err := nanolog.Log(LogClient, "EcGet", time0.String()); err != nil {
 	//	fmt.Println(err)
 	//}
-	c.GetLatency = int64(time0)
+	c.Data.GetLatency = int64(time0)
 	// FIXME: dirty design which leaks abstraction to the user
 	return host, true
 }
@@ -305,10 +305,10 @@ func (c *Client) Receive(addr string) {
 	//if err := nanolog.Log(LogClient, "EcReceive", time0.String()); err != nil {
 	//	fmt.Println(err)
 	//}
-	c.RecLatency = int64(time0)
-	//if c.SetReqId != "" {
-	nanolog.Log(LogClient, "set", c.SetReqId, c.SetLatency, c.RecLatency, int64(0))
-	//}
+	c.Data.RecLatency = int64(time0)
+	if c.Data.SetReqId != "" {
+		nanolog.Log(LogClient, "set", c.Data.SetReqId, c.Data.SetLatency, c.Data.RecLatency, int64(0))
+	}
 }
 
 func (c *Client) Encoding(obj []byte) ([][]byte, error) {
@@ -366,7 +366,7 @@ func (c *Client) Decoding(data [][]byte) error {
 	//	fmt.Println("decoding log err", err)
 	//}
 	fmt.Println(ok)
-	nanolog.Log(LogClient, "get", c.GetReqId, c.GetLatency, c.RecLatency, time0)
+	nanolog.Log(LogClient, "get", c.Data.GetReqId, c.Data.GetLatency, c.Data.RecLatency, time0)
 	return err
 	// output
 	//var res bytes.Buffer

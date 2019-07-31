@@ -31,7 +31,6 @@ type DataEntry struct {
 }
 
 type Client struct {
-	ReqId string
 	//ConnArr  []net.Conn
 	//W        []*resp.RequestWriter
 	//R        []resp.ResponseReader
@@ -41,7 +40,7 @@ type Client struct {
 	Rec          bytes.Buffer
 	MappingTable map[string]*cuckoo.Filter
 	Ring         *consistent.Consistent
-	DataEntry
+	Data         DataEntry
 }
 
 func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
