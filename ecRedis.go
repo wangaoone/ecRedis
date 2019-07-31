@@ -366,7 +366,7 @@ func (c *Client) Decoding(data [][]byte) error {
 	//	fmt.Println("decoding log err", err)
 	//}
 	fmt.Println(ok)
-	nanolog.Log(LogClient, "get", c.Data.GetReqId, c.Data.GetLatency, c.Data.RecLatency, time0)
+	nanolog.Log(LogClient, "get", c.Data.GetReqId, c.Data.GetLatency, c.Data.RecLatency, int64(time0))
 	return err
 	// output
 	//var res bytes.Buffer
