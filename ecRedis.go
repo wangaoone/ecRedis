@@ -161,22 +161,23 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 		}*/
 	fmt.Println("SET located host: ", host)
 
-	shards, err := Encoding(c.EC, val)
+	shards, err := c.Encoding(val)
 	if err != nil {
 		fmt.Println("EcSet err", err)
 	}
-	reqId := uuid.New().String()
+	c.ReqId = uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], &wg, reqId)
+		go c.set(host, key, shards[i], i, index[i], &wg, c.ReqId)
 	}
 	wg.Wait()
 	time0 := time.Since(t0)
 	//fmt.Println("EcSet all goroutines are done!")
-	if err := nanolog.Log(LogClient, "EcSet", time0.String()); err != nil {
-		fmt.Println(err)
-	}
+	//if err := nanolog.Log(LogClient, "EcSet", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
+	c.DataEntry.SetLatency = int64(time0)
 	// FIXME: dirty design which leaks abstraction to the user
 	return host, true
 }
@@ -205,38 +206,39 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	host := member.String()
 	fmt.Println("ring LocateKey costs:", time.Since(t))
 	fmt.Println("GET located host: ", host)
-	reqId := uuid.New().String()
+	c.GetReqId = uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
-		go c.get(host, key, &wg, i, reqId)
+		go c.get(host, key, &wg, i, c.GetReqId)
 	}
 	wg.Wait()
 	//fmt.Println("EcGet all goroutines are done!")
 	time0 := time.Since(t0)
-	if err := nanolog.Log(LogClient, "EcGet", time0.String()); err != nil {
-		fmt.Println(err)
-	}
+	//if err := nanolog.Log(LogClient, "EcGet", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
+	c.GetLatency = int64(time0)
 	// FIXME: dirty design which leaks abstraction to the user
 	return host, true
 }
 
 func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
+	//t0 := time.Now()
 	c.ChunkArr[i] = nil
-	t0 := time.Now()
 	var id int64
 	// peeking response type and receive
 	// chunk id
 	//type0, err := c.R[i].PeekType()
-	t1 := time.Now()
+	//t1 := time.Now()
 	type0, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	time1 := time.Since(t1)
+	//time1 := time.Since(t1)
 	//fmt.Println("after 1st peektype len is", c.R[i].Buffered())
 	//fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
-	t2 := time.Now()
+	//t2 := time.Now()
 	switch type0 {
 	case resp.TypeInt:
 		id, err = c.Conns[addr][i].R.ReadInt()
@@ -253,17 +255,17 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
-	time2 := time.Since(t2)
+	//time2 := time.Since(t2)
 	// chunk
-	t3 := time.Now()
+	//t3 := time.Now()
 	//type1, err := c.R[i].PeekType()
 	type1, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		fmt.Println("peekType err", err)
 		return
 	}
-	time3 := time.Since(t3)
-	t4 := time.Now()
+	//time3 := time.Since(t3)
+	//t4 := time.Now()
 	switch type1 {
 	case resp.TypeBulk:
 		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
@@ -274,8 +276,8 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	default:
 		panic("unexpected response type")
 	}
-	time4 := time.Since(t4)
-	time0 := time.Since(t0)
+	//time4 := time.Since(t4)
+	//time0 := time.Since(t0)
 	wg.Done()
 	//fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
 	//	"Client send RECEIVE req timeStamp", t0,
@@ -284,10 +286,10 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	//	"Client Peek chunkBody time is", time3,
 	//	"Client read chunkBody time is", time4,
 	//	"RECEIVE goroutine duration time is ", time0)
-	if err := nanolog.Log(LogRec, int(id)%(DataShards+ParityShards), t0.String(), time1.String(), time2.String(),
-		time3.String(), time4.String(), time0.String()); err != nil {
-		fmt.Println(err)
-	}
+	//if err := nanolog.Log(LogRec, int(id)%(DataShards+ParityShards), t0.String(), time1.String(), time2.String(),
+	//	time3.String(), time4.String(), time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
 }
 
 func (c *Client) Receive(addr string) {
@@ -300,8 +302,78 @@ func (c *Client) Receive(addr string) {
 	wg.Wait()
 	time0 := time.Since(t0)
 	//fmt.Println("EcReceive all goroutines are done!")
-	if err := nanolog.Log(LogClient, "EcReceive", time0.String()); err != nil {
-		fmt.Println(err)
+	//if err := nanolog.Log(LogClient, "EcReceive", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
+	c.RecLatency = int64(time0)
+	if c.SetReqId != "" {
+		nanolog.Log(LogClient, "set", c.SetReqId, c.SetLatency, c.RecLatency, int64(0))
 	}
+}
 
+func (c *Client) Encoding(obj []byte) ([][]byte, error) {
+	// split obj first
+	shards, err := c.EC.Split(obj)
+	if err != nil {
+		fmt.Println("encoding split err", err)
+		return nil, err
+	}
+	// Encode parity
+	err = c.EC.Encode(shards)
+	if err != nil {
+		fmt.Println("encoding encode err", err)
+		return nil, err
+	}
+	ok, err := c.EC.Verify(shards)
+	if ok == false {
+		panic("encoding failed")
+	}
+	fmt.Println("encoding verify status is ", ok)
+	return shards, err
+}
+
+//func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
+//func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
+func (c *Client) Decoding(data [][]byte) error {
+	//counter := 0
+	//for i := range data {
+	//	if data[i] == nil {
+	//		counter += 1
+	//	}
+	//}
+	//fmt.Println("Client chunkArr nil index is", counter)
+	t0 := time.Now()
+	ok, err := c.EC.Verify(data)
+	if ok {
+		fmt.Println("No reconstruction needed")
+	} else {
+		fmt.Println("Verification failed. Reconstructing data")
+		err = c.EC.Reconstruct(data)
+		if err != nil {
+			fmt.Println("Reconstruct failed -", err)
+		}
+		ok, err = c.EC.Verify(data)
+		if !ok {
+			fmt.Println("Verification failed after reconstruction, data likely corrupted.")
+		}
+		if err != nil {
+			fmt.Println(err)
+		}
+	}
+	time0 := time.Since(t0)
+	//fmt.Println("Data status is", ok, "Decoding time is", time.Since(t))
+	//if err := nanolog.Log(LogDec, ok, time0.String()); err != nil {
+	//	fmt.Println("decoding log err", err)
+	//}
+	fmt.Println(ok)
+	nanolog.Log(LogClient, "get", c.GetReqId, c.GetLatency, c.RecLatency, time0)
+	return err
+	// output
+	//var res bytes.Buffer
+	//err = encoder.Join(&res, data, fileSize)
+	//if err != nil {
+	//	fmt.Println(err)
+	//}
+	//fmt.Println("decode val len is ", len(res.Bytes()))
+	//return res, err
 }

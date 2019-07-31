@@ -21,7 +21,17 @@ type Conn struct {
 	R    resp.ResponseReader
 }
 
+type DataEntry struct {
+	Cmd        string
+	SetReqId   string
+	GetReqId   string
+	SetLatency int64
+	GetLatency int64
+	RecLatency int64
+}
+
 type Client struct {
+	ReqId string
 	//ConnArr  []net.Conn
 	//W        []*resp.RequestWriter
 	//R        []resp.ResponseReader
@@ -31,6 +41,7 @@ type Client struct {
 	Rec          bytes.Buffer
 	MappingTable map[string]*cuckoo.Filter
 	Ring         *consistent.Consistent
+	DataEntry
 }
 
 func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
