@@ -52,6 +52,7 @@ func SetLogger(l func(nanolog.Handle, ...interface{}) error) {
 
 func nanoLog(handle nanolog.Handle, args ...interface{}) {
 	//if logger != nil {
+	fmt.Println("nanoLog argu 0 is", args[0])
 	logger(handle, args...)
 	//}
 }

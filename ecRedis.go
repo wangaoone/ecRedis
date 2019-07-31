@@ -305,9 +305,9 @@ func (c *Client) Receive(addr string) {
 	//	fmt.Println(err)
 	//}
 	c.RecLatency = int64(time0)
-	if c.SetReqId != "" {
-		nanoLog(LogClient, "set", c.SetReqId, c.SetLatency, c.RecLatency, int64(0))
-	}
+	//if c.SetReqId != "" {
+	nanoLog(LogClient, "set", c.SetReqId, c.SetLatency, c.RecLatency, int64(0))
+	//}
 }
 
 func (c *Client) Encoding(obj []byte) ([][]byte, error) {
