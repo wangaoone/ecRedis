@@ -68,7 +68,7 @@ func (c *Client) initDial(address string) {
 }
 
 func (c *Client) Dial(addrArr []string) {
-	t0 := time.Now()
+	//t0 := time.Now()
 	members := []consistent.Member{}
 	for _, host := range addrArr {
 		member := Member(host)
@@ -91,11 +91,11 @@ func (c *Client) Dial(addrArr []string) {
 		fmt.Println("to dial to: ", addr)
 		c.initDial(addr)
 	}
-	time0 := time.Since(t0)
+	//time0 := time.Since(t0)
 	//fmt.Println("Dial all goroutines are done!")
-	if err := nanolog.Log(LogClient, "Dial", time0.String()); err != nil {
-		fmt.Println(err)
-	}
+	//if err := nanolog.Log(LogClient, "Dial", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
 }
 
 func (c *Client) getHost(key string) (addr string, ok bool) {
