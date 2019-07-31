@@ -1,6 +1,7 @@
 package ecRedis
 
 import (
+	"fmt"
 	"github.com/ScottMansfield/nanolog"
 )
 
@@ -22,5 +23,12 @@ func init() {
 		"RECEIVE goroutine duration time is %s ")
 	LogDec = nanolog.AddLogger("DataStatus is %b, Decoding time is %s")
 	// cmd, reqId, get/set req latency, rec latency, decoding latency
-	LogClient = nanolog.AddLogger("%s,%s, %i64, %i64, %i64")
+	LogClient = nanolog.AddLogger("%s, %s, %i64, %i64, %i64")
+
+}
+
+func Flush() {
+	if err := nanolog.Flush(); err != nil {
+		fmt.Println("log flush err")
+	}
 }
