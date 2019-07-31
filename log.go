@@ -24,8 +24,8 @@ func init() {
 		"Client read chunkBody time is %s " +
 		"RECEIVE goroutine duration time is %s ")
 	LogDec = nanolog.AddLogger("DataStatus is %b, Decoding time is %s")
-	// cmd, reqId, get/set req latency, rec latency, decoding latency
-	LogClient = nanolog.AddLogger("%s, %s, %i64, %i64, %i64, %i64")
+	// cmd, reqId, Begin, duration, get/set req latency, rec latency, decoding latency
+	LogClient = nanolog.AddLogger("%s, %s, %i64, %i64, %i64, %i64, %i64")
 
 }
 

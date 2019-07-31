@@ -311,7 +311,8 @@ func (c *Client) Receive(addr string) {
 	c.Data.End = time.Now().UnixNano()
 	if c.Data.SetReqId != "" {
 		c.Data.Duration = c.Data.End - c.Data.SetBegin
-		nanolog.Log(LogClient, "set", c.Data.SetReqId, c.Data.SetLatency, c.Data.RecLatency, c.Data.Duration, int64(0))
+		nanolog.Log(LogClient, "set", c.Data.SetReqId,
+			c.Data.SetBegin, c.Data.Duration, c.Data.SetLatency, c.Data.RecLatency, int64(0))
 	}
 }
 
@@ -371,7 +372,8 @@ func (c *Client) Decoding(data [][]byte) error {
 	//}
 	fmt.Println(ok)
 	c.Data.Duration = c.Data.End - c.Data.GetBegin
-	nanolog.Log(LogClient, "get", c.Data.GetReqId, c.Data.GetLatency, c.Data.RecLatency, c.Data.Duration, int64(time0))
+	nanolog.Log(LogClient, "get", c.Data.GetReqId,
+		c.Data.GetBegin, c.Data.Duration, c.Data.GetLatency, c.Data.RecLatency, int64(time0))
 	return err
 	// output
 	//var res bytes.Buffer
