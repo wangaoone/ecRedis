@@ -2,6 +2,7 @@ package ecRedis
 
 import (
 	"fmt"
+	"github.com/ScottMansfield/nanolog"
 	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
@@ -306,7 +307,7 @@ func (c *Client) Receive(addr string) {
 	//}
 	c.RecLatency = int64(time0)
 	//if c.SetReqId != "" {
-	nanoLog(LogClient, "set", c.SetReqId, c.SetLatency, c.RecLatency, int64(0))
+	nanolog.Log(LogClient, "set", c.SetReqId, c.SetLatency, c.RecLatency, int64(0))
 	//}
 }
 
@@ -365,7 +366,7 @@ func (c *Client) Decoding(data [][]byte) error {
 	//	fmt.Println("decoding log err", err)
 	//}
 	fmt.Println(ok)
-	nanoLog(LogClient, "get", c.GetReqId, c.GetLatency, c.RecLatency, time0)
+	nanolog.Log(LogClient, "get", c.GetReqId, c.GetLatency, c.RecLatency, time0)
 	return err
 	// output
 	//var res bytes.Buffer
