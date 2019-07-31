@@ -11,6 +11,7 @@ var (
 	LogRec    nanolog.Handle
 	LogDec    nanolog.Handle
 	LogClient nanolog.Handle
+	logger    func(nanolog.Handle, ...interface{}) error
 )
 
 func init() {
@@ -44,3 +45,14 @@ func FlushLog() {
 		fmt.Println("log flush err")
 	}
 }
+
+func SetLogger(l func(nanolog.Handle, ...interface{}) error) {
+	logger = l
+}
+
+func nanoLog(handle nanolog.Handle, args ...interface{}) {
+	if logger != nil {
+		logger(handle, args...)
+	}
+}
+
