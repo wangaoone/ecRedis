@@ -28,6 +28,10 @@ type DataEntry struct {
 	SetLatency int64
 	GetLatency int64
 	RecLatency int64
+	SetBegin   int64
+	GetBegin   int64
+	End        int64
+	Duration   int64
 }
 
 type Client struct {

@@ -132,6 +132,7 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, w
 
 func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	t0 := time.Now()
+	c.Data.SetBegin = t0.UnixNano()
 	var wg sync.WaitGroup
 
 	// randomly generate destiny lambda store id
@@ -198,6 +199,7 @@ func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int, reqId s
 
 func (c *Client) EcGet(key string) (addr string, ok bool) {
 	t0 := time.Now()
+	c.Data.GetBegin = t0.UnixNano()
 	var wg sync.WaitGroup
 
 	//addr, ok := c.getHost(key)
@@ -306,8 +308,10 @@ func (c *Client) Receive(addr string) {
 	//	fmt.Println(err)
 	//}
 	c.Data.RecLatency = int64(time0)
+	c.Data.End = time.Now().UnixNano()
 	if c.Data.SetReqId != "" {
-		nanolog.Log(LogClient, "set", c.Data.SetReqId, c.Data.SetLatency, c.Data.RecLatency, int64(0))
+		c.Data.Duration = c.Data.End - c.Data.SetBegin
+		nanolog.Log(LogClient, "set", c.Data.SetReqId, c.Data.SetLatency, c.Data.RecLatency, c.Data.Duration, int64(0))
 	}
 }
 
@@ -366,7 +370,8 @@ func (c *Client) Decoding(data [][]byte) error {
 	//	fmt.Println("decoding log err", err)
 	//}
 	fmt.Println(ok)
-	nanolog.Log(LogClient, "get", c.Data.GetReqId, c.Data.GetLatency, c.Data.RecLatency, int64(time0))
+	c.Data.Duration = c.Data.End - c.Data.GetBegin
+	nanolog.Log(LogClient, "get", c.Data.GetReqId, c.Data.GetLatency, c.Data.RecLatency, c.Data.Duration, int64(time0))
 	return err
 	// output
 	//var res bytes.Buffer
