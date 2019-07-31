@@ -51,8 +51,7 @@ func SetLogger(l func(nanolog.Handle, ...interface{}) error) {
 }
 
 func nanoLog(handle nanolog.Handle, args ...interface{}) {
-	if logger != nil {
-		logger(handle, args...)
-	}
+	//if logger != nil {
+	logger(handle, args...)
+	//}
 }
-
