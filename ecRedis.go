@@ -371,7 +371,7 @@ func (c *Client) Decoding(data [][]byte) error {
 	//	fmt.Println("decoding log err", err)
 	//}
 	fmt.Println(ok)
-	c.Data.Duration = c.Data.End - c.Data.GetBegin
+	c.Data.Duration = time.Now().UnixNano() - c.Data.GetBegin
 	nanolog.Log(LogClient, "get", c.Data.GetReqId,
 		c.Data.GetBegin, c.Data.Duration, c.Data.GetLatency, c.Data.RecLatency, int64(time0))
 	return err
