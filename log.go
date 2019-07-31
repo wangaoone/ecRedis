@@ -3,6 +3,7 @@ package ecRedis
 import (
 	"fmt"
 	"github.com/ScottMansfield/nanolog"
+	"os"
 )
 
 var (
@@ -27,7 +28,18 @@ func init() {
 
 }
 
-func Flush() {
+func CreateLog(opts map[string]interface{}) {
+	path := opts["file"].(string) + "_bench.clog"
+	nanoLogout, err := os.Create(path)
+	if err != nil {
+		panic(err)
+	}
+	err = nanolog.SetWriter(nanoLogout)
+	if err != nil {
+		panic(err)
+	}
+}
+func FlushLog() {
 	if err := nanolog.Flush(); err != nil {
 		fmt.Println("log flush err")
 	}
