@@ -227,7 +227,7 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	//t0 := time.Now()
 	c.ChunkArr[i] = nil
-	var id int64
+	var chunkId int
 	// peeking response type and receive
 	// chunk id
 	//type0, err := c.R[i].PeekType()
@@ -242,14 +242,19 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	//fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
 	//t2 := time.Now()
 	switch type0 {
-	case resp.TypeInt:
-		id, err = c.Conns[addr][i].R.ReadInt()
+	case resp.TypeBulk:
+		tempChunkId, err := c.Conns[addr][i].R.ReadBulkString()
 		//id, err = c.Conns[addr][i].R.ReadBulkString()
 		if err != nil {
 			fmt.Println("typeBulkString err", err)
 		}
-		fmt.Println("id is ", id)
-		if id == -1 {
+
+		chunkId, err = strconv.Atoi(tempChunkId)
+		if err != nil {
+			fmt.Println("to Int", err)
+		}
+		fmt.Println("chunkId is ", chunkId)
+		if chunkId == -1 {
 			wg.Done()
 			fmt.Println("receive enough chunks")
 			return
@@ -271,7 +276,7 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	switch type1 {
 	case resp.TypeBulk:
 		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
-		c.ChunkArr[int(id)], err = c.Conns[addr][i].R.ReadBulk(nil)
+		c.ChunkArr[chunkId], err = c.Conns[addr][i].R.ReadBulk(nil)
 		if err != nil {
 			fmt.Println("typeBulk err", err)
 		}
