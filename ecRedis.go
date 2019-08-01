@@ -140,7 +140,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	index := random(DataShards + ParityShards)
 
 	//addr, ok := c.getHost(key)
-	fmt.Println("in SET, key is: ", key)
+	//fmt.Println("in SET, key is: ", key)
 	t := time.Now()
 	member := c.Ring.LocateKey([]byte(key))
 	host := member.String()
@@ -184,8 +184,8 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 }
 
 func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int, reqId string) {
-	tGet := time.Now()
-	fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
+	//tGet := time.Now()
+	//fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
 	//c.W[i].WriteCmdString("GET", key)
 	//c.Conns[addr][i].W.WriteCmdString("GET", key)
 	c.Conns[addr][i].W.WriteCmdString("GET", key, strconv.Itoa(i), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards)) // cmd key chunkId reqId DataShards ParityShards
@@ -203,11 +203,11 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	var wg sync.WaitGroup
 
 	//addr, ok := c.getHost(key)
-	t := time.Now()
+	//t := time.Now()
 	member := c.Ring.LocateKey([]byte(key))
 	host := member.String()
-	fmt.Println("ring LocateKey costs:", time.Since(t))
-	fmt.Println("GET located host: ", host)
+	//fmt.Println("ring LocateKey costs:", time.Since(t))
+	//fmt.Println("GET located host: ", host)
 	c.Data.GetReqId = uuid.New().String()
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
