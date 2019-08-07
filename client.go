@@ -61,3 +61,11 @@ func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
 		MappingTable: make(map[string]*cuckoo.Filter),
 	}
 }
+
+func (cli *Client) Close() {
+	for _, conns := range cli.Conns {
+		for _, conn := range conns {
+			conn.conn.Close()
+		}
+	}
+}
