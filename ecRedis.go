@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	MaxLambdaStores int = 14
+	MaxLambdaStores int = 64
 )
 
 type Member string
@@ -113,8 +113,8 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 // random will generate random sequence within the lambda stores
 // index and get top n id
 func random(n int) []int {
-	r := rand.New(rand.NewSource(time.Now().Unix()))
-	return r.Perm(MaxLambdaStores)[:n]
+	rand.Seed(time.Now().UnixNano())
+	return rand.Perm(MaxLambdaStores)[:n]
 }
 
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup, reqId string) {
@@ -138,6 +138,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	// randomly generate destiny lambda store id
 	// return top (DataShards + ParityShards) lambda index
 	index := random(DataShards + ParityShards)
+	//fmt.Println(index)
 
 	//addr, ok := c.getHost(key)
 	//fmt.Println("in SET, key is: ", key)
