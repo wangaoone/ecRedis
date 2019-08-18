@@ -38,7 +38,7 @@ type Client struct {
 	//ConnArr  []net.Conn
 	//W        []*resp.RequestWriter
 	//R        []resp.ResponseReader
-	Conns        map[string][]Conn
+	Conns        map[string][]*Conn
 	ChunkArr     [][]byte
 	EC           reedsolomon.Encoder
 	Rec          bytes.Buffer
@@ -55,7 +55,7 @@ func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
 		//ConnArr:  make([]net.Conn, dataShards+parityShards),
 		//W:        make([]*resp.RequestWriter, dataShards+parityShards),
 		//R:        make([]resp.ResponseReader, dataShards+parityShards),
-		Conns:        make(map[string][]Conn),
+		Conns:        make(map[string][]*Conn),
 		ChunkArr:     make([][]byte, DataShards+ParityShards),
 		EC:           NewEncoder(DataShards, ParityShards, ECMaxGoroutine),
 		MappingTable: make(map[string]*cuckoo.Filter),
@@ -63,9 +63,13 @@ func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
 }
 
 func (cli *Client) Close() {
+	log.Info("Cleaning up...")
 	for _, conns := range cli.Conns {
 		for _, conn := range conns {
-			conn.conn.Close()
+			if conn != nil {
+				conn.conn.Close()
+			}
 		}
 	}
+	log.Info("Client closed.")
 }

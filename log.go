@@ -11,7 +11,7 @@ var (
 	LogRec    nanolog.Handle
 	LogDec    nanolog.Handle
 	LogClient nanolog.Handle
-	logger    func(nanolog.Handle, ...interface{}) error
+	nlogger    func(nanolog.Handle, ...interface{}) error
 )
 
 func init() {
@@ -40,6 +40,7 @@ func CreateLog(opts map[string]interface{}) {
 		panic(err)
 	}
 }
+
 func FlushLog() {
 	if err := nanolog.Flush(); err != nil {
 		fmt.Println("log flush err")
@@ -47,12 +48,12 @@ func FlushLog() {
 }
 
 func SetLogger(l func(nanolog.Handle, ...interface{}) error) {
-	logger = l
+	nlogger = l
 }
 
 func nanoLog(handle nanolog.Handle, args ...interface{}) {
 	//if logger != nil {
 	fmt.Println("nanoLog argu 0 is", args[0])
-	logger(handle, args...)
+	nlogger(handle, args...)
 	//}
 }

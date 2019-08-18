@@ -1,12 +1,13 @@
 package ecRedis
 
 import (
-	"fmt"
+	"bytes"
 	"github.com/ScottMansfield/nanolog"
 	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
 	"github.com/seiflotfy/cuckoofilter"
+	"github.com/wangaoone/LambdaObjectstore/lib/logger"
 	"github.com/wangaoone/redeo/resp"
 	"io"
 	"math/rand"
@@ -18,6 +19,14 @@ import (
 
 const (
 	MaxLambdaStores int = 64
+)
+
+var (
+	log = &logger.ColorLogger{
+		Prefix: "EcRedis ",
+		Level: logger.LOG_LEVEL_ALL,
+		Color: true,
+	}
 )
 
 type Member string
@@ -39,35 +48,29 @@ func NewResponseReader(rd io.Reader) resp.ResponseReader {
 	return resp.NewResponseReader(rd)
 }
 
-func dial(address string) (net.Conn, error) {
-	cn, err := net.Dial("tcp", address)
-	if err != nil {
-		fmt.Println("dial err is ", err)
-		return nil, err
-	}
-	return cn, err
-}
-
 //func (c *Client) initDial(address string, wg *sync.WaitGroup) {
-func (c *Client) initDial(address string) {
+func (c *Client) initDial(address string) error {
 	// initialize parallel connections under address
-	tmp := make([]Conn, DataShards+ParityShards)
+	tmp := make([]*Conn, DataShards+ParityShards)
+	c.Conns[address] = tmp
 	for i := 0; i < DataShards+ParityShards; i++ {
-		cn, err := dial(address)
+		cn, err := net.Dial("tcp", address)
 		if err != nil {
-			fmt.Println("dial err is ", err)
+			return err
 		}
-		tmp[i].conn = cn
-		tmp[i].W = NewRequestWriter(cn)
-		tmp[i].R = NewResponseReader(cn)
-		c.Conns[address] = tmp
+		tmp[i] = &Conn{
+			conn: cn,
+			W: NewRequestWriter(cn),
+			R: NewResponseReader(cn),
+		}
 	}
 
 	// initialize the cuckoo filter under address
 	c.MappingTable[address] = cuckoo.NewFilter(1000000)
+	return nil
 }
 
-func (c *Client) Dial(addrArr []string) {
+func (c *Client) Dial(addrArr []string) bool {
 	//t0 := time.Now()
 	members := []consistent.Member{}
 	for _, host := range addrArr {
@@ -88,14 +91,19 @@ func (c *Client) Dial(addrArr []string) {
 	}
 	c.Ring = consistent.New(members, cfg)
 	for _, addr := range addrArr {
-		fmt.Println("to dial to: ", addr)
-		c.initDial(addr)
+		log.Debug("Dialing %s...", addr)
+		if err := c.initDial(addr); err != nil {
+			log.Error("Fail to dial %s: %v", addr, err)
+			c.Close()
+			return false
+		}
 	}
 	//time0 := time.Since(t0)
 	//fmt.Println("Dial all goroutines are done!")
 	//if err := nanolog.Log(LogClient, "Dial", time0.String()); err != nil {
 	//	fmt.Println(err)
 	//}
+	return true
 }
 
 func (c *Client) getHost(key string) (addr string, ok bool) {
@@ -117,17 +125,35 @@ func random(n int) []int {
 	return rand.Perm(MaxLambdaStores)[:n]
 }
 
-func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, wg *sync.WaitGroup, reqId string) {
+func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, errs chan error) {
+	defer wg.Done()
+
 	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
 	//c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	c.Conns[addr][i].W.WriteCmdClient("SET", key, strconv.Itoa(i), strconv.Itoa(lambdaId), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards), val) // key chunkId lambdaId reqId val
+	//c.Conns[addr][i].W.WriteCmdClient("SET", key, strconv.Itoa(i), strconv.Itoa(lambdaId), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards), val) // key chunkId lambdaId reqId val
+	w := c.Conns[addr][i].W
+	w.WriteMultiBulkSize(8)
+	w.WriteBulkString("set")
+	w.WriteBulkString(key)
+	w.WriteBulkString(strconv.Itoa(i))
+	w.WriteBulkString(strconv.Itoa(lambdaId))
+	w.WriteBulkString(reqId)
+	w.WriteBulkString(strconv.Itoa(DataShards))
+	w.WriteBulkString(strconv.Itoa(ParityShards))
+
 	//c.Conns[addr][i].W.WriteCmdBulkRedis("SET", key, val)
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
-	if err := c.Conns[addr][i].W.Flush(); err != nil {
-		panic(err)
+	if err := w.CopyBulk(bytes.NewReader(val), int64(len(val))); err != nil {
+		errs <- err
+		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
+		return
 	}
-	wg.Done()
+	if err := w.Flush(); err != nil {
+		errs <- err
+		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
+		return
+	}
 }
 
 func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
@@ -145,7 +171,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	t := time.Now()
 	member := c.Ring.LocateKey([]byte(key))
 	host := member.String()
-	fmt.Println("ring LocateKey costs:", time.Since(t))
+	log.Debug("ring LocateKey costs: %v", time.Since(t))
 	/*
 		if ok == false {
 			i := rand.Intn(len(c.MappingTable))
@@ -161,17 +187,19 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 			}
 			fmt.Println("Failed to locate one host: randomly pick one: ", addr)
 		}*/
-	fmt.Println("SET located host: ", host)
+	log.Debug("SET located host: %s", host)
 
 	shards, err := c.Encoding(val)
 	if err != nil {
-		fmt.Println("EcSet err", err)
+		log.Warn("EcSet failed to encode: %v", err)
 	}
 	c.Data.SetReqId = uuid.New().String()
-	for i := 0; i < DataShards+ParityShards; i++ {
+
+	errs := make(chan error, DataShards + ParityShards)
+	for i := 0; i < DataShards + ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], &wg, c.Data.SetReqId)
+		go c.set(host, key, shards[i], i, index[i], c.Data.SetReqId, &wg, errs)
 	}
 	wg.Wait()
 	time0 := time.Since(t0)
@@ -180,11 +208,21 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	//	fmt.Println(err)
 	//}
 	c.Data.SetLatency = int64(time0)
+
 	// FIXME: dirty design which leaks abstraction to the user
-	return host, true
+	select {
+	case <- errs:
+		close(errs)
+		return "", false
+	default:
+		// no errors
+		return host, true
+	}
 }
 
-func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int, reqId string) {
+func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, errs chan error) {
+	defer wg.Done()
+
 	//tGet := time.Now()
 	//fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
 	//c.W[i].WriteCmdString("GET", key)
@@ -193,9 +231,9 @@ func (c *Client) get(addr string, key string, wg *sync.WaitGroup, i int, reqId s
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {
-		panic(err)
+		errs <- err
+		log.Warn("Failed to initiate getting %s (%s): %v", key, addr, err)
 	}
-	wg.Done()
 }
 
 func (c *Client) EcGet(key string) (addr string, ok bool) {
@@ -210,9 +248,11 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	//fmt.Println("ring LocateKey costs:", time.Since(t))
 	//fmt.Println("GET located host: ", host)
 	c.Data.GetReqId = uuid.New().String()
+
+	errs := make(chan error, DataShards + ParityShards)
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
-		go c.get(host, key, &wg, i, c.Data.GetReqId)
+		go c.get(host, key, i, c.Data.GetReqId, &wg, errs)
 	}
 	wg.Wait()
 	//fmt.Println("EcGet all goroutines are done!")
@@ -221,11 +261,21 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	//	fmt.Println(err)
 	//}
 	c.Data.GetLatency = int64(time0)
+
 	// FIXME: dirty design which leaks abstraction to the user
-	return host, true
+	select {
+	case <- errs:
+		close(errs)
+		return "", false
+	default:
+		// no errors
+		return host, true
+	}
 }
 
-func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
+func (c *Client) rec(addr string, i int, wg *sync.WaitGroup) {
+	defer wg.Done()
+
 	//t0 := time.Now()
 	c.ChunkArr[i] = nil
 	var chunkId int
@@ -235,7 +285,7 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 	//t1 := time.Now()
 	type0, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
-		fmt.Println("peekType err", err)
+		log.Warn("PeekType error on receiving chunk %d: %v", i, err)
 		return
 	}
 	//time1 := time.Since(t1)
@@ -247,45 +297,42 @@ func (c *Client) rec(addr string, wg *sync.WaitGroup, i int) {
 		tempChunkId, err := c.Conns[addr][i].R.ReadBulkString()
 		//id, err = c.Conns[addr][i].R.ReadBulkString()
 		if err != nil {
-			fmt.Println("typeBulkString err", err)
+			log.Warn("Failed to read chunkId on receiving chunk %d: %v", i, err)
+			return
 		}
 
 		chunkId, err = strconv.Atoi(tempChunkId)
 		if err != nil {
-			fmt.Println("to Int", err)
+			log.Warn("Invalid chunkId on receiving chunk %d (%s): %v", i, tempChunkId, err)
+			return
 		}
 		if chunkId == -1 {
 			wg.Done()
-			fmt.Println("receive enough chunks")
+			log.Debug("Abandon late chunk %d", i)
 			return
 		}
-	default:
-		panic("unexpected response type")
-	}
-	//time2 := time.Since(t2)
-	// chunk
-	//t3 := time.Now()
-	//type1, err := c.R[i].PeekType()
-	type1, err := c.Conns[addr][i].R.PeekType()
-	if err != nil {
-		fmt.Println("peekType err", err)
+	case resp.TypeError:
+		log.Warn("Error on receiving chunk %d: %v", i, err)
 		return
 	}
-	//time3 := time.Since(t3)
-	//t4 := time.Now()
-	switch type1 {
-	case resp.TypeBulk:
-		//c.ChunkArr[int(id)%(redeo.DataShards+redeo.ParityShards)], err = c.R[i].ReadBulk(nil)
-		c.ChunkArr[chunkId], err = c.Conns[addr][i].R.ReadBulk(nil)
-		if err != nil {
-			fmt.Println("typeBulk err", err)
-		}
-	default:
-		panic("unexpected response type")
+
+	// Read value
+	valReader, err := c.Conns[addr][i].R.StreamBulk()
+	if err != nil {
+		log.Warn("Error on get value reader on receiving chunk %d: %v", i, err)
+		return
 	}
+	val, err := valReader.ReadAll()
+	if err != nil {
+		log.Error("Error on get value on receiving chunk %d: %v", i, err)
+		return
+	}
+
+	log.Debug("Got chunk %d", i)
+	c.ChunkArr[chunkId] = val
 	//time4 := time.Since(t4)
 	//time0 := time.Since(t0)
-	wg.Done()
+
 	//fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
 	//	"Client send RECEIVE req timeStamp", t0,
 	//	"Client Peek ChunkId time is", time1,
@@ -304,7 +351,7 @@ func (c *Client) Receive(addr string) {
 	var wg sync.WaitGroup
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
-		go c.rec(addr, &wg, i)
+		go c.rec(addr, i, &wg)
 	}
 	wg.Wait()
 	time0 := time.Since(t0)
@@ -325,20 +372,21 @@ func (c *Client) Encoding(obj []byte) ([][]byte, error) {
 	// split obj first
 	shards, err := c.EC.Split(obj)
 	if err != nil {
-		fmt.Println("encoding split err", err)
+		log.Warn("Encoding split err: %v", err)
 		return nil, err
 	}
 	// Encode parity
 	err = c.EC.Encode(shards)
 	if err != nil {
-		fmt.Println("encoding encode err", err)
+		log.Warn("Encoding encode err: %v", err)
 		return nil, err
 	}
 	ok, err := c.EC.Verify(shards)
 	if ok == false {
-		panic("encoding failed")
+		log.Warn("Failed to verify encoding: %v", err)
+		return nil, err
 	}
-	fmt.Println("encoding verify status is ", ok)
+	log.Debug("Encoding succeeded.")
 	return shards, err
 }
 
@@ -355,19 +403,18 @@ func (c *Client) Decoding(data [][]byte) error {
 	t0 := time.Now()
 	ok, err := c.EC.Verify(data)
 	if ok {
-		fmt.Println("No reconstruction needed")
+		log.Debug("No reconstruction needed.")
 	} else {
-		fmt.Println("Verification failed. Reconstructing data")
+		log.Debug("Verification failed. Reconstructing data...")
 		err = c.EC.Reconstruct(data)
 		if err != nil {
-			fmt.Println("Reconstruct failed -", err)
+			log.Warn("Reconstruction failed: %v", err)
+			return err
 		}
 		ok, err = c.EC.Verify(data)
 		if !ok {
-			fmt.Println("Verification failed after reconstruction, data likely corrupted.")
-		}
-		if err != nil {
-			fmt.Println(err)
+			log.Warn("Verification failed after reconstruction, data could be corrupted: %v", err)
+			return err
 		}
 	}
 	time0 := time.Since(t0)
@@ -375,7 +422,6 @@ func (c *Client) Decoding(data [][]byte) error {
 	//if err := nanolog.Log(LogDec, ok, time0.String()); err != nil {
 	//	fmt.Println("decoding log err", err)
 	//}
-	fmt.Println(ok)
 	c.Data.Duration = time.Now().UnixNano() - c.Data.GetBegin
 	nanolog.Log(LogClient, "get", c.Data.GetReqId,
 		c.Data.GetBegin, c.Data.Duration, c.Data.GetLatency, c.Data.RecLatency, int64(time0))
