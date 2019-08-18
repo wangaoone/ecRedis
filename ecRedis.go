@@ -307,7 +307,6 @@ func (c *Client) rec(addr string, i int, wg *sync.WaitGroup) {
 			return
 		}
 		if chunkId == -1 {
-			wg.Done()
 			log.Debug("Abandon late chunk %d", i)
 			return
 		}
