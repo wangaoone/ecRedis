@@ -363,7 +363,7 @@ func (c *Client) Receive(addr string) {
 	if c.Data.SetReqId != "" {
 		c.Data.Duration = c.Data.End - c.Data.SetBegin
 		nanolog.Log(LogClient, "set", c.Data.SetReqId,
-			c.Data.SetBegin, c.Data.Duration, c.Data.SetLatency, c.Data.RecLatency, int64(0))
+			c.Data.SetBegin, c.Data.Duration, c.Data.SetLatency, c.Data.RecLatency, int64(0), false, false)
 	}
 }
 
