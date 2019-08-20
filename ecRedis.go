@@ -24,8 +24,8 @@ const (
 var (
 	log = &logger.ColorLogger{
 		Prefix: "EcRedis ",
-		Level: logger.LOG_LEVEL_ALL,
-		Color: true,
+		Level:  logger.LOG_LEVEL_ALL,
+		Color:  true,
 	}
 )
 
@@ -60,8 +60,8 @@ func (c *Client) initDial(address string) error {
 		}
 		tmp[i] = &Conn{
 			conn: cn,
-			W: NewRequestWriter(cn),
-			R: NewResponseReader(cn),
+			W:    NewRequestWriter(cn),
+			R:    NewResponseReader(cn),
 		}
 	}
 
@@ -195,8 +195,8 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 	}
 	c.Data.SetReqId = uuid.New().String()
 
-	errs := make(chan error, DataShards + ParityShards)
-	for i := 0; i < DataShards + ParityShards; i++ {
+	errs := make(chan error, DataShards+ParityShards)
+	for i := 0; i < DataShards+ParityShards; i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
 		go c.set(host, key, shards[i], i, index[i], c.Data.SetReqId, &wg, errs)
@@ -211,7 +211,7 @@ func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
 
 	// FIXME: dirty design which leaks abstraction to the user
 	select {
-	case <- errs:
+	case <-errs:
 		close(errs)
 		return "", false
 	default:
@@ -249,7 +249,7 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 	//fmt.Println("GET located host: ", host)
 	c.Data.GetReqId = uuid.New().String()
 
-	errs := make(chan error, DataShards + ParityShards)
+	errs := make(chan error, DataShards+ParityShards)
 	for i := 0; i < DataShards+ParityShards; i++ {
 		wg.Add(1)
 		go c.get(host, key, i, c.Data.GetReqId, &wg, errs)
@@ -264,7 +264,7 @@ func (c *Client) EcGet(key string) (addr string, ok bool) {
 
 	// FIXME: dirty design which leaks abstraction to the user
 	select {
-	case <- errs:
+	case <-errs:
 		close(errs)
 		return "", false
 	default:
@@ -392,6 +392,7 @@ func (c *Client) Encoding(obj []byte) ([][]byte, error) {
 //func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
 //func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
 func (c *Client) Decoding(data [][]byte) error {
+	var corruptCheck bool
 	//counter := 0
 	//for i := range data {
 	//	if data[i] == nil {
@@ -400,8 +401,8 @@ func (c *Client) Decoding(data [][]byte) error {
 	//}
 	//fmt.Println("Client chunkArr nil index is", counter)
 	t0 := time.Now()
-	ok, err := c.EC.Verify(data)
-	if ok {
+	reconstructCheck, err := c.EC.Verify(data)
+	if reconstructCheck {
 		log.Debug("No reconstruction needed.")
 	} else {
 		log.Debug("Verification failed. Reconstructing data...")
@@ -410,8 +411,8 @@ func (c *Client) Decoding(data [][]byte) error {
 			log.Warn("Reconstruction failed: %v", err)
 			return err
 		}
-		ok, err = c.EC.Verify(data)
-		if !ok {
+		corruptCheck, err = c.EC.Verify(data)
+		if !corruptCheck {
 			log.Warn("Verification failed after reconstruction, data could be corrupted: %v", err)
 			return err
 		}
@@ -423,7 +424,7 @@ func (c *Client) Decoding(data [][]byte) error {
 	//}
 	c.Data.Duration = time.Now().UnixNano() - c.Data.GetBegin
 	nanolog.Log(LogClient, "get", c.Data.GetReqId,
-		c.Data.GetBegin, c.Data.Duration, c.Data.GetLatency, c.Data.RecLatency, int64(time0))
+		c.Data.GetBegin, c.Data.Duration, c.Data.GetLatency, c.Data.RecLatency, int64(time0), reconstructCheck, corruptCheck)
 	return err
 	// output
 	//var res bytes.Buffer
