@@ -24,7 +24,7 @@ const (
 var (
 	log = &logger.ColorLogger{
 		Prefix: "EcRedis ",
-		Level:  logger.LOG_LEVEL_ALL,
+		Level:  logger.LOG_LEVEL_WARN,
 		Color:  true,
 	}
 )
@@ -120,9 +120,9 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 
 // random will generate random sequence within the lambda stores
 // index and get top n id
-func random(n int) []int {
+func random(n int, max int) []int {
 	rand.Seed(time.Now().UnixNano())
-	return rand.Perm(MaxLambdaStores)[:n]
+	return rand.Perm(max)[:n]
 }
 
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, errs chan error) {
@@ -156,14 +156,14 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 	}
 }
 
-func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
+func (c *Client) EcSet(key string, val []byte, max int) (located string, ok bool) {
 	t0 := time.Now()
 	c.Data.SetBegin = t0.UnixNano()
 	var wg sync.WaitGroup
 
 	// randomly generate destiny lambda store id
 	// return top (DataShards + ParityShards) lambda index
-	index := random(DataShards + ParityShards)
+	index := random(DataShards+ParityShards, max)
 	//fmt.Println(index)
 
 	//addr, ok := c.getHost(key)
