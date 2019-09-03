@@ -180,7 +180,7 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 		_, err := ret.(error)
 		if err {
 			failed = append(failed, i)
-		} else {
+		} else if ret != nil {
 			chunks[i] = ret.([]byte)
 		}
 	}
