@@ -137,7 +137,7 @@ func (c *Client) EcSet(key string, val []byte) bool {
 	nanolog.Log(LogClient, "set", c.Data.ReqId, c.Data.Begin.UnixNano(),
 		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(c.Data.RecLatency), int64(0),
 		false, false)
-	log.Info("Set %s %v", key, c.Data.Duration)
+	log.Info("Set %s %v(%v %v)", key, c.Data.Duration, c.Data.ReqLatency, c.Data.RecLatency)
 
 	return true
 }
@@ -196,7 +196,7 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 	nanolog.Log(LogClient, "get", c.Data.ReqId, c.Data.Begin.UnixNano(),
 		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(c.Data.RecLatency), int64(end.Sub(decodeStart)),
 		c.Data.AllGood, c.Data.Corrupted)
-	log.Info("Got %s %v", key, c.Data.Duration)
+	log.Info("Got %s %v(%v %v %v)", key, c.Data.Duration, c.Data.ReqLatency, c.Data.RecLatency, end.Sub(decodeStart))
 
 	// Try recover
 	if len(failed) > 0 {
