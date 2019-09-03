@@ -7,6 +7,7 @@ import (
 	"github.com/seiflotfy/cuckoofilter"
 	"github.com/wangaoone/redeo/resp"
 	"net"
+	"time"
 )
 
 var (
@@ -23,15 +24,13 @@ type Conn struct {
 
 type DataEntry struct {
 	Cmd        string
-	SetReqId   string
-	GetReqId   string
-	SetLatency int64
-	GetLatency int64
-	RecLatency int64
-	SetBegin   int64
-	GetBegin   int64
-	End        int64
-	Duration   int64
+	ReqId      string
+	Begin      time.Time
+	ReqLatency time.Duration
+	RecLatency time.Duration
+	Duration   time.Duration
+	AllGood    bool
+	Corrupted  bool
 }
 
 type Client struct {
