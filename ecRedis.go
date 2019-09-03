@@ -2,6 +2,7 @@ package ecRedis
 
 import (
 	"bytes"
+	"errors"
 	"github.com/ScottMansfield/nanolog"
 	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
@@ -48,28 +49,6 @@ func NewResponseReader(rd io.Reader) resp.ResponseReader {
 	return resp.NewResponseReader(rd)
 }
 
-//func (c *Client) initDial(address string, wg *sync.WaitGroup) {
-func (c *Client) initDial(address string) error {
-	// initialize parallel connections under address
-	tmp := make([]*Conn, DataShards+ParityShards)
-	c.Conns[address] = tmp
-	for i := 0; i < DataShards+ParityShards; i++ {
-		cn, err := net.Dial("tcp", address)
-		if err != nil {
-			return err
-		}
-		tmp[i] = &Conn{
-			conn: cn,
-			W:    NewRequestWriter(cn),
-			R:    NewResponseReader(cn),
-		}
-	}
-
-	// initialize the cuckoo filter under address
-	c.MappingTable[address] = cuckoo.NewFilter(1000000)
-	return nil
-}
-
 func (c *Client) Dial(addrArr []string) bool {
 	//t0 := time.Now()
 	members := []consistent.Member{}
@@ -104,6 +83,141 @@ func (c *Client) Dial(addrArr []string) bool {
 	//	fmt.Println(err)
 	//}
 	return true
+}
+
+func (c *Client) EcSet(key string, val []byte) bool {
+	t0 := time.Now()
+	c.Data.SetBegin = t0.UnixNano()
+	var wg sync.WaitGroup
+
+	// randomly generate destiny lambda store id
+	index := random(DataShards + ParityShards)
+
+	//addr, ok := c.getHost(key)
+	//fmt.Println("in SET, key is: ", key)
+	t := time.Now()
+	member := c.Ring.LocateKey([]byte(key))
+	host := member.String()
+	log.Debug("ring LocateKey costs: %v", time.Since(t))
+	log.Debug("SET located host: %s", host)
+
+	shards, err := c.encode(val)
+	if err != nil {
+		log.Warn("EcSet failed to encode: %v", err)
+		return false
+	}
+	c.Data.SetReqId = uuid.New().String()
+
+	errs := make(chan error, DataShards+ParityShards)
+	for i := 0; i < DataShards+ParityShards; i++ {
+		//fmt.Println("shards", i, "is", shards[i])
+		wg.Add(1)
+		go c.set(host, key, shards[i], i, index[i], c.Data.SetReqId, &wg, errs)
+	}
+	wg.Wait()
+	time0 := time.Since(t0)
+	//fmt.Println("EcSet all goroutines are done!")
+	//if err := nanolog.Log(LogClient, "EcSet", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
+	c.Data.SetLatency = int64(time0)
+
+	select {
+	case <-errs:
+		close(errs)
+		return false
+	default:
+	}
+
+	rets := c.receive(host)
+	for _, ret := range rets {
+		_, err := ret.(error)
+		if err {
+			return false
+		}
+	}
+	return true
+}
+
+func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
+	t0 := time.Now()
+	c.Data.GetBegin = t0.UnixNano()
+	var wg sync.WaitGroup
+
+	//addr, ok := c.getHost(key)
+	//t := time.Now()
+	member := c.Ring.LocateKey([]byte(key))
+	host := member.String()
+	//fmt.Println("ring LocateKey costs:", time.Since(t))
+	//fmt.Println("GET located host: ", host)
+	c.Data.GetReqId = uuid.New().String()
+
+	errs := make(chan error, DataShards+ParityShards)
+	for i := 0; i < DataShards+ParityShards; i++ {
+		wg.Add(1)
+		go c.get(host, key, i, c.Data.GetReqId, &wg, errs)
+	}
+	wg.Wait()
+	//fmt.Println("EcGet all goroutines are done!")
+	time0 := time.Since(t0)
+	//if err := nanolog.Log(LogClient, "EcGet", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
+	c.Data.GetLatency = int64(time0)
+
+	// FIXME: dirty design which leaks abstraction to the user
+	select {
+	case <-errs:
+		close(errs)
+		return nil, false
+	default:
+	}
+
+	rets := c.receive(host)
+	chunks := make([][]byte, len(rets))
+	failed := make([]int, 0, len(rets))
+	for i, ret := range rets {
+		_, err := ret.(error)
+		if err {
+			failed = append(failed, i)
+		} else {
+			chunks[i] = ret.([]byte)
+		}
+	}
+
+	reader, err := c.decode(chunks, size)
+	if err != nil {
+		return nil, false
+	}
+
+	// Try recover
+	if len(failed) > 0 {
+		go c.recover(host, key, c.Data.GetReqId, chunks, failed)
+	}
+
+	return reader, true
+}
+
+//func (c *Client) initDial(address string, wg *sync.WaitGroup) {
+func (c *Client) initDial(address string) error {
+	// initialize parallel connections under address
+	tmp := make([]*Conn, DataShards+ParityShards)
+	c.Conns[address] = tmp
+	for i := 0; i < DataShards+ParityShards; i++ {
+		cn, err := net.Dial("tcp", address)
+		if err != nil {
+			return err
+		}
+		tmp[i] = &Conn{
+			conn: cn,
+			W:    NewRequestWriter(cn),
+			R:    NewResponseReader(cn),
+		}
+	}
+
+	// initialize the cuckoo filter under address
+	c.MappingTable[address] = cuckoo.NewFilter(1000000)
+	return nil
 }
 
 func (c *Client) getHost(key string) (addr string, ok bool) {
@@ -156,70 +270,6 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 	}
 }
 
-func (c *Client) EcSet(key string, val []byte) (located string, ok bool) {
-	t0 := time.Now()
-	c.Data.SetBegin = t0.UnixNano()
-	var wg sync.WaitGroup
-
-	// randomly generate destiny lambda store id
-	// return top (DataShards + ParityShards) lambda index
-	index := random(DataShards + ParityShards)
-	//fmt.Println(index)
-
-	//addr, ok := c.getHost(key)
-	//fmt.Println("in SET, key is: ", key)
-	t := time.Now()
-	member := c.Ring.LocateKey([]byte(key))
-	host := member.String()
-	log.Debug("ring LocateKey costs: %v", time.Since(t))
-	/*
-		if ok == false {
-			i := rand.Intn(len(c.MappingTable))
-			// this means that the key does not exist in lambda store
-			for a, _ := range c.MappingTable {
-				if i == 0 {
-					addr = a
-					// don't forget to insert the non-existing key
-					c.MappingTable[addr].InsertUnique([]byte(key))
-					break
-				}
-				i--
-			}
-			fmt.Println("Failed to locate one host: randomly pick one: ", addr)
-		}*/
-	log.Debug("SET located host: %s", host)
-
-	shards, err := c.Encoding(val)
-	if err != nil {
-		log.Warn("EcSet failed to encode: %v", err)
-	}
-	c.Data.SetReqId = uuid.New().String()
-
-	errs := make(chan error, DataShards+ParityShards)
-	for i := 0; i < DataShards+ParityShards; i++ {
-		//fmt.Println("shards", i, "is", shards[i])
-		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], c.Data.SetReqId, &wg, errs)
-	}
-	wg.Wait()
-	time0 := time.Since(t0)
-	//fmt.Println("EcSet all goroutines are done!")
-	//if err := nanolog.Log(LogClient, "EcSet", time0.String()); err != nil {
-	//	fmt.Println(err)
-	//}
-	c.Data.SetLatency = int64(time0)
-
-	// FIXME: dirty design which leaks abstraction to the user
-	select {
-	case <-errs:
-		close(errs)
-		return "", false
-	default:
-		// no errors
-		return host, true
-	}
-}
-
 func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, errs chan error) {
 	defer wg.Done()
 
@@ -236,82 +286,37 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 	}
 }
 
-func (c *Client) EcGet(key string) (addr string, ok bool) {
-	t0 := time.Now()
-	c.Data.GetBegin = t0.UnixNano()
-	var wg sync.WaitGroup
-
-	//addr, ok := c.getHost(key)
-	//t := time.Now()
-	member := c.Ring.LocateKey([]byte(key))
-	host := member.String()
-	//fmt.Println("ring LocateKey costs:", time.Since(t))
-	//fmt.Println("GET located host: ", host)
-	c.Data.GetReqId = uuid.New().String()
-
-	errs := make(chan error, DataShards+ParityShards)
-	for i := 0; i < DataShards+ParityShards; i++ {
-		wg.Add(1)
-		go c.get(host, key, i, c.Data.GetReqId, &wg, errs)
-	}
-	wg.Wait()
-	//fmt.Println("EcGet all goroutines are done!")
-	time0 := time.Since(t0)
-	//if err := nanolog.Log(LogClient, "EcGet", time0.String()); err != nil {
-	//	fmt.Println(err)
-	//}
-	c.Data.GetLatency = int64(time0)
-
-	// FIXME: dirty design which leaks abstraction to the user
-	select {
-	case <-errs:
-		close(errs)
-		return "", false
-	default:
-		// no errors
-		return host, true
-	}
-}
-
-func (c *Client) rec(addr string, i int, wg *sync.WaitGroup) {
+func (c *Client) rec(addr string, i int, ret []interface{}, wg *sync.WaitGroup) {
 	defer wg.Done()
 
-	//t0 := time.Now()
-	c.ChunkArr[i] = nil
-	var chunkId int
 	// peeking response type and receive
 	// chunk id
-	//type0, err := c.R[i].PeekType()
-	//t1 := time.Now()
 	type0, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		log.Warn("PeekType error on receiving chunk %d: %v", i, err)
+		ret[i] = err
 		return
 	}
-	//time1 := time.Since(t1)
-	//fmt.Println("after 1st peektype len is", c.R[i].Buffered())
-	//fmt.Println("after 1st peektype len is", c.Conns[addr][i].R.Buffered())
-	//t2 := time.Now()
+
 	switch type0 {
 	case resp.TypeBulk:
-		tempChunkId, err := c.Conns[addr][i].R.ReadBulkString()
-		//id, err = c.Conns[addr][i].R.ReadBulkString()
+		chunkId, err := c.Conns[addr][i].R.ReadBulkString()
 		if err != nil {
 			log.Warn("Failed to read chunkId on receiving chunk %d: %v", i, err)
+			ret[i] = err
 			return
 		}
-
-		chunkId, err = strconv.Atoi(tempChunkId)
-		if err != nil {
-			log.Warn("Invalid chunkId on receiving chunk %d (%s): %v", i, tempChunkId, err)
-			return
-		}
-		if chunkId == -1 {
+		if chunkId == "-1" {
 			log.Debug("Abandon late chunk %d", i)
 			return
 		}
 	case resp.TypeError:
+		strErr, err := c.Conns[addr][i].R.ReadError()
+		if err == nil {
+			err = errors.New(strErr)
+		}
 		log.Warn("Error on receiving chunk %d: %v", i, err)
+		ret[i] = err
 		return
 	}
 
@@ -319,18 +324,18 @@ func (c *Client) rec(addr string, i int, wg *sync.WaitGroup) {
 	valReader, err := c.Conns[addr][i].R.StreamBulk()
 	if err != nil {
 		log.Warn("Error on get value reader on receiving chunk %d: %v", i, err)
+		ret[i] = err
 		return
 	}
 	val, err := valReader.ReadAll()
 	if err != nil {
 		log.Error("Error on get value on receiving chunk %d: %v", i, err)
+		ret[i] = err
 		return
 	}
 
 	log.Debug("Got chunk %d", i)
-	c.ChunkArr[chunkId] = val
-	//time4 := time.Since(t4)
-	//time0 := time.Since(t0)
+	ret[i] = val
 
 	//fmt.Println("chunk id is", int(id)%(DataShards+ParityShards),
 	//	"Client send RECEIVE req timeStamp", t0,
@@ -345,12 +350,13 @@ func (c *Client) rec(addr string, i int, wg *sync.WaitGroup) {
 	//}
 }
 
-func (c *Client) Receive(addr string) {
+func (c *Client) receive(addr string) []interface{} {
 	t0 := time.Now()
 	var wg sync.WaitGroup
-	for i := 0; i < DataShards+ParityShards; i++ {
+	ret := make([]interface{}, DataShards + ParityShards)
+	for i := 0; i < len(ret); i++ {
 		wg.Add(1)
-		go c.rec(addr, i, &wg)
+		go c.rec(addr, i, ret, &wg)
 	}
 	wg.Wait()
 	time0 := time.Since(t0)
@@ -365,9 +371,30 @@ func (c *Client) Receive(addr string) {
 		nanolog.Log(LogClient, "set", c.Data.SetReqId,
 			c.Data.SetBegin, c.Data.Duration, c.Data.SetLatency, c.Data.RecLatency, int64(0), false, false)
 	}
+	return ret
 }
 
-func (c *Client) Encoding(obj []byte) ([][]byte, error) {
+func (c *Client) recover(addr string, key string, reqId string, shards [][]byte, failed []int) {
+	var wg sync.WaitGroup
+	errs := make(chan error, len(failed))
+	for _, i := range failed {
+		wg.Add(1)
+		// lambdaId = 0, for lambdaID of a specified key is fixed on setting.
+		go c.set(addr, key, shards[i], i, 0, reqId, &wg, errs)
+	}
+	wg.Wait()
+
+	// FIXME: dirty design which leaks abstraction to the user
+	select {
+	case <-errs:
+		log.Warn("Failed to recover shards of %s: %v", key, failed)
+		close(errs)
+	default:
+		log.Info("Succeeded to recover shards of %s: %v", key, failed)
+	}
+}
+
+func (c *Client) encode(obj []byte) ([][]byte, error) {
 	// split obj first
 	shards, err := c.EC.Split(obj)
 	if err != nil {
@@ -389,9 +416,9 @@ func (c *Client) Encoding(obj []byte) ([][]byte, error) {
 	return shards, err
 }
 
-//func Decoding(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
-//func Decoding(encoder reedsolomon.Encoder, data [][]byte) error {
-func (c *Client) Decoding(data [][]byte) error {
+//func decode(encoder reedsolomon.Encoder, data [][]byte /*, fileSize int*/) (bytes.Buffer, error) {
+//func decode(encoder reedsolomon.Encoder, data [][]byte) error {
+func (c *Client) decode(data [][]byte, size int) (io.ReadCloser, error) {
 	var corruptCheck bool
 	//counter := 0
 	//for i := range data {
@@ -409,23 +436,26 @@ func (c *Client) Decoding(data [][]byte) error {
 		err = c.EC.Reconstruct(data)
 		if err != nil {
 			log.Warn("Reconstruction failed: %v", err)
-			return err
+			return nil, err
 		}
 		corruptCheck, err = c.EC.Verify(data)
 		if !corruptCheck {
 			log.Warn("Verification failed after reconstruction, data could be corrupted: %v", err)
-			return err
+			return nil, err
 		}
 	}
 	time0 := time.Since(t0)
-	//fmt.Println("Data status is", ok, "Decoding time is", time.Since(t))
+	//fmt.Println("Data status is", ok, "decode time is", time.Since(t))
 	//if err := nanolog.Log(LogDec, ok, time0.String()); err != nil {
-	//	fmt.Println("decoding log err", err)
+	//	fmt.Println("decode log err", err)
 	//}
 	c.Data.Duration = time.Now().UnixNano() - c.Data.GetBegin
 	nanolog.Log(LogClient, "get", c.Data.GetReqId,
 		c.Data.GetBegin, c.Data.Duration, c.Data.GetLatency, c.Data.RecLatency, int64(time0), reconstructCheck, corruptCheck)
-	return err
+
+	reader, writer := io.Pipe()
+	go c.EC.Join(writer, data, size)
+	return reader, nil
 	// output
 	//var res bytes.Buffer
 	//err = encoder.Join(&res, data, fileSize)

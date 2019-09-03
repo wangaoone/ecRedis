@@ -39,7 +39,6 @@ type Client struct {
 	//W        []*resp.RequestWriter
 	//R        []resp.ResponseReader
 	Conns        map[string][]*Conn
-	ChunkArr     [][]byte
 	EC           reedsolomon.Encoder
 	Rec          bytes.Buffer
 	MappingTable map[string]*cuckoo.Filter
@@ -56,7 +55,6 @@ func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
 		//W:        make([]*resp.RequestWriter, dataShards+parityShards),
 		//R:        make([]resp.ResponseReader, dataShards+parityShards),
 		Conns:        make(map[string][]*Conn),
-		ChunkArr:     make([][]byte, DataShards+ParityShards),
 		EC:           NewEncoder(DataShards, ParityShards, ECMaxGoroutine),
 		MappingTable: make(map[string]*cuckoo.Filter),
 	}
