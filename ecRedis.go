@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	MaxLambdaStores int = 64
+	MaxLambdaStores int = 300
 )
 
 var (
