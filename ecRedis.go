@@ -345,7 +345,7 @@ func (c *Client) rec(addr string, i int, reqId string,ret *EcRet, wg *sync.WaitG
 
 func (c *Client) recover(addr string, key string, reqId string, shards [][]byte, failed []int) {
 	var wg sync.WaitGroup
-	ret := NewEcRet(len(failed), 0)
+	ret := NewEcRet(DataShards, ParityShards))
 	for _, i := range failed {
 		wg.Add(1)
 		// lambdaId = 0, for lambdaID of a specified key is fixed on setting.
