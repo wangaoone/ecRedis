@@ -19,7 +19,7 @@ import (
 )
 
 const (
-	MaxLambdaStores int = 64
+	MaxLambdaStores int = 300
 )
 
 var (
@@ -28,6 +28,7 @@ var (
 		Level:  logger.LOG_LEVEL_ALL,
 		Color:  true,
 	}
+	ErrUnexpectedResponse = errors.New("Unexpected response")
 )
 
 type Member string
@@ -106,38 +107,24 @@ func (c *Client) EcSet(key string, val []byte) bool {
 	c.Data.ReqId = uuid.New().String()
 
 	var wg sync.WaitGroup
-	errs := make(chan error, DataShards+ParityShards)
-	for i := 0; i < DataShards+ParityShards; i++ {
+	ret := NewEcRet(DataShards, ParityShards)
+	for i := 0; i < ret.Len(); i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], c.Data.ReqId, &wg, errs)
+		go c.set(host, key, shards[i], i, index[i], c.Data.ReqId, &wg, ret)
 	}
 	wg.Wait()
-	requested := time.Now()
-	c.Data.ReqLatency = requested.Sub(c.Data.Begin)
+	c.Data.ReqLatency = time.Since(c.Data.Begin)
+	c.Data.Duration = c.Data.ReqLatency
 
-	select {
-	case <-errs:
-		close(errs)
+	if ret.Err != nil {
 		return false
-	default:
 	}
 
-	rets := c.receive(host)
-	c.Data.RecLatency = time.Since(requested)
-
-	for _, ret := range rets {
-		_, err := ret.(error)
-		if err {
-			return false
-		}
-	}
-
-	c.Data.Duration = time.Since(c.Data.Begin)
 	nanolog.Log(LogClient, "set", c.Data.ReqId, c.Data.Begin.UnixNano(),
-		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(c.Data.RecLatency), int64(0),
+		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(0), int64(0),
 		false, false)
-	log.Info("Set %s %v(%v %v)", key, c.Data.Duration, c.Data.ReqLatency, c.Data.RecLatency)
+	log.Info("Set %s %v", key, c.Data.Duration)
 
 	return true
 }
@@ -154,34 +141,27 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 
 	// Send request and wait
 	var wg sync.WaitGroup
-	errs := make(chan error, DataShards+ParityShards)
-	for i := 0; i < DataShards+ParityShards; i++ {
+	ret := NewEcRet(DataShards, ParityShards)
+	for i := 0; i < ret.Len(); i++ {
 		wg.Add(1)
-		go c.get(host, key, i, c.Data.ReqId, &wg, errs)
+		go c.get(host, key, i, c.Data.ReqId, &wg, ret)
 	}
 	wg.Wait()
-	requested := time.Now()
-	c.Data.ReqLatency = requested.Sub(c.Data.Begin)
+	c.Data.RecLatency = time.Since(c.Data.Begin)
 
-	select {
-	case <-errs:
-		close(errs)
+	if ret.Err != nil {
 		return nil, false
-	default:
 	}
 
-	rets := c.receive(host)
-	c.Data.RecLatency = time.Since(requested)
-
 	// Filter results
-	chunks := make([][]byte, len(rets))
-	failed := make([]int, 0, len(rets))
-	for i, ret := range rets {
-		_, err := ret.(error)
-		if err {
+	chunks := make([][]byte, ret.Len())
+	failed := make([]int, 0, ret.Len())
+	for i, _ := range ret.Rets {
+		err := ret.Error(i)
+		if err != nil {
 			failed = append(failed, i)
-		} else if ret != nil {
-			chunks[i] = ret.([]byte)
+		} else {
+			chunks[i] = ret.Ret(i)
 		}
 	}
 
@@ -194,13 +174,13 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 	end := time.Now()
 	c.Data.Duration = end.Sub(c.Data.Begin)
 	nanolog.Log(LogClient, "get", c.Data.ReqId, c.Data.Begin.UnixNano(),
-		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(c.Data.RecLatency), int64(end.Sub(decodeStart)),
+		int64(c.Data.Duration), int64(0), int64(c.Data.RecLatency), int64(end.Sub(decodeStart)),
 		c.Data.AllGood, c.Data.Corrupted)
-	log.Info("Got %s %v(%v %v %v)", key, c.Data.Duration, c.Data.ReqLatency, c.Data.RecLatency, end.Sub(decodeStart))
+	log.Info("Got %s %v(%v %v)", key, c.Data.Duration, c.Data.RecLatency, end.Sub(decodeStart))
 
 	// Try recover
 	if len(failed) > 0 {
-		go c.recover(host, key, c.Data.ReqId, chunks, failed)
+		c.recover(host, key, uuid.New().String(), chunks, failed)
 	}
 
 	return reader, true
@@ -247,7 +227,7 @@ func random(n int) []int {
 	return rand.Perm(MaxLambdaStores)[:n]
 }
 
-func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, errs chan error) {
+func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
 	defer wg.Done()
 
 	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
@@ -267,18 +247,20 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := w.CopyBulk(bytes.NewReader(val), int64(len(val))); err != nil {
-		errs <- err
+		ret.SetError(i, err)
 		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
 		return
 	}
 	if err := w.Flush(); err != nil {
-		errs <- err
+		ret.SetError(i, err)
 		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
 		return
 	}
+
+	c.rec(addr, i, reqId, ret, nil)
 }
 
-func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, errs chan error) {
+func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
 	defer wg.Done()
 
 	//tGet := time.Now()
@@ -289,42 +271,61 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {
-		errs <- err
+		ret.SetError(i, err)
 		log.Warn("Failed to initiate getting %s (%s): %v", key, addr, err)
 	}
+
+	c.rec(addr, i, reqId, ret, nil)
 }
 
-func (c *Client) rec(addr string, i int, ret []interface{}, wg *sync.WaitGroup) {
-	defer wg.Done()
+func (c *Client) rec(addr string, i int, reqId string,ret *EcRet, wg *sync.WaitGroup) {
+	if wg != nil {
+		defer wg.Done()
+	}
 
 	// peeking response type and receive
 	// chunk id
 	type0, err := c.Conns[addr][i].R.PeekType()
 	if err != nil {
 		log.Warn("PeekType error on receiving chunk %d: %v", i, err)
-		ret[i] = err
+		ret.SetError(i, err)
 		return
 	}
 
 	switch type0 {
-	case resp.TypeBulk:
-		chunkId, err := c.Conns[addr][i].R.ReadBulkString()
-		if err != nil {
-			log.Warn("Failed to read chunkId on receiving chunk %d: %v", i, err)
-			ret[i] = err
-			return
-		}
-		if chunkId == "-1" {
-			log.Debug("Abandon late chunk %d", i)
-			return
-		}
 	case resp.TypeError:
 		strErr, err := c.Conns[addr][i].R.ReadError()
 		if err == nil {
 			err = errors.New(strErr)
 		}
 		log.Warn("Error on receiving chunk %d: %v", i, err)
-		ret[i] = err
+		ret.SetError(i, err)
+		return
+	}
+
+	respId, err := c.Conns[addr][i].R.ReadBulkString()
+	if err != nil {
+		log.Warn("Failed to read reqId on receiving chunk %d: %v", i, err)
+		ret.SetError(i, err)
+		return
+	}
+	if respId != reqId {
+		log.Warn("Unexpected response %s, want %s, chunk %d", respId, reqId, i)
+		// Skip fields
+		_, _ = c.Conns[addr][i].R.ReadBulkString()
+		_ = c.Conns[addr][i].R.SkipBulk()
+		ret.SetError(i, ErrUnexpectedResponse)
+		return
+	}
+
+	chunkId, err := c.Conns[addr][i].R.ReadBulkString()
+	if err != nil {
+		log.Warn("Failed to read chunkId on receiving chunk %d: %v", i, err)
+		ret.SetError(i, err)
+		return
+	}
+	if chunkId == "-1" {
+		log.Debug("Abandon late chunk %d", i)
 		return
 	}
 
@@ -332,47 +333,33 @@ func (c *Client) rec(addr string, i int, ret []interface{}, wg *sync.WaitGroup) 
 	valReader, err := c.Conns[addr][i].R.StreamBulk()
 	if err != nil {
 		log.Warn("Error on get value reader on receiving chunk %d: %v", i, err)
-		ret[i] = err
+		ret.SetError(i, err)
 		return
 	}
 	val, err := valReader.ReadAll()
 	if err != nil {
 		log.Error("Error on get value on receiving chunk %d: %v", i, err)
-		ret[i] = err
+		ret.SetError(i, err)
 		return
 	}
 
 	log.Debug("Got chunk %d", i)
-	ret[i] = val
-}
-
-func (c *Client) receive(addr string) []interface{} {
-	var wg sync.WaitGroup
-	ret := make([]interface{}, DataShards + ParityShards)
-	for i := 0; i < len(ret); i++ {
-		wg.Add(1)
-		go c.rec(addr, i, ret, &wg)
-	}
-	wg.Wait()
-
-	return ret
+	ret.Set(i, val)
 }
 
 func (c *Client) recover(addr string, key string, reqId string, shards [][]byte, failed []int) {
 	var wg sync.WaitGroup
-	errs := make(chan error, len(failed))
+	ret := NewEcRet(len(failed), 0)
 	for _, i := range failed {
 		wg.Add(1)
 		// lambdaId = 0, for lambdaID of a specified key is fixed on setting.
-		go c.set(addr, key, shards[i], i, 0, reqId, &wg, errs)
+		go c.set(addr, key, shards[i], i, 0, reqId, &wg, ret)
 	}
 	wg.Wait()
 
-	select {
-	case <-errs:
+	if ret.Err != nil {
 		log.Warn("Failed to recover shards of %s: %v", key, failed)
-		close(errs)
-	default:
+	} else {
 		log.Info("Succeeded to recover shards of %s: %v", key, failed)
 	}
 }
