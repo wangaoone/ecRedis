@@ -149,10 +149,6 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 	wg.Wait()
 	c.Data.RecLatency = time.Since(c.Data.Begin)
 
-	if ret.Err != nil {
-		return nil, false
-	}
-
 	// Filter results
 	chunks := make([][]byte, ret.Len())
 	failed := make([]int, 0, ret.Len())
