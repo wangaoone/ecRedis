@@ -70,3 +70,41 @@ func (cli *Client) Close() {
 	}
 	log.Info("Client closed.")
 }
+
+type EcRet struct {
+	DataShards      int
+	ParityShards    int
+	Rets            []interface{}
+	Err             error
+}
+
+func NewEcRet(data,parity int) *EcRet {
+	return &EcRet{
+		DataShards: data,
+		ParityShards: parity,
+		Rets: make([]interface{}, data + parity),
+	}
+}
+
+func (r *EcRet) Len() int {
+	return r.DataShards + r.ParityShards
+}
+
+func (r *EcRet) Set(i int, ret interface{}) {
+	r.Rets[i] = ret
+}
+
+func (r *EcRet) SetError(i int, ret interface{}) {
+	r.Rets[i] = ret
+	r.Err = ret.(error)
+}
+
+func (r *EcRet) Ret(i int) (ret []byte) {
+	ret, _ = r.Rets[i].([]byte)
+	return
+}
+
+func (r *EcRet) Error(i int) (err error) {
+	err, _ = r.Rets[i].(error)
+	return
+}
