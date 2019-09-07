@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	MaxLambdaStores int = 300
+	// This setting will avoid network contention.
+	MaxLambdaStores int = 200
 )
 
 var (
@@ -30,6 +31,10 @@ var (
 	}
 	ErrUnexpectedResponse = errors.New("Unexpected response")
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 type Member string
 
@@ -219,27 +224,18 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 // random will generate random sequence within the lambda stores
 // index and get top n id
 func random(n int) []int {
-	rand.Seed(time.Now().UnixNano())
 	return rand.Perm(MaxLambdaStores)[:n]
 }
 
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
 	defer wg.Done()
 
-	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	//c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	//c.Conns[addr][i].W.WriteCmdClient("SET", key, strconv.Itoa(i), strconv.Itoa(lambdaId), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards), val) // key chunkId lambdaId reqId val
 	w := c.Conns[addr][i].W
-	w.WriteMultiBulkSize(8)
-	w.WriteBulkString("set")
-	w.WriteBulkString(key)
-	w.WriteBulkString(strconv.Itoa(i))
-	w.WriteBulkString(strconv.Itoa(lambdaId))
-	w.WriteBulkString(reqId)
-	w.WriteBulkString(strconv.Itoa(DataShards))
-	w.WriteBulkString(strconv.Itoa(ParityShards))
+	c.Conns[addr][i].W.WriteCmdString(
+		"set", key, strconv.Itoa(i),
+		strconv.Itoa(lambdaId), strconv.Itoa(MaxLambdaStores),
+		reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards))
 
-	//c.Conns[addr][i].W.WriteCmdBulkRedis("SET", key, val)
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := w.CopyBulk(bytes.NewReader(val), int64(len(val))); err != nil {
@@ -261,9 +257,10 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 
 	//tGet := time.Now()
 	//fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
-	//c.W[i].WriteCmdString("GET", key)
-	//c.Conns[addr][i].W.WriteCmdString("GET", key)
-	c.Conns[addr][i].W.WriteCmdString("GET", key, strconv.Itoa(i), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards)) // cmd key chunkId reqId DataShards ParityShards
+	c.Conns[addr][i].W.WriteCmdString(
+		"get", key, strconv.Itoa(i),
+		reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards)) // cmd key chunkId reqId DataShards ParityShards
+
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {
