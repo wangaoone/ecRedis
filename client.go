@@ -45,11 +45,11 @@ type Client struct {
 	Data         DataEntry
 }
 
-func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) Client {
+func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) *Client {
 	DataShards = dataShards
 	ParityShards = parityShards
 	ECMaxGoroutine = ecMaxGoroutine
-	return Client{
+	return &Client{
 		//ConnArr:  make([]net.Conn, dataShards+parityShards),
 		//W:        make([]*resp.RequestWriter, dataShards+parityShards),
 		//R:        make([]resp.ResponseReader, dataShards+parityShards),

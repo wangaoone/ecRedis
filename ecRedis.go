@@ -91,7 +91,7 @@ func (c *Client) Dial(addrArr []string) bool {
 	return true
 }
 
-func (c *Client) EcSet(key string, val []byte) bool {
+func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 	c.Data.Begin = time.Now()
 
 	// randomly generate destiny lambda store id
@@ -130,6 +130,15 @@ func (c *Client) EcSet(key string, val []byte) bool {
 		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(0), int64(0),
 		false, false)
 	log.Info("Set %s %v", key, c.Data.Duration)
+
+	if len(args) > 0 {
+		placements, ok := args[0].([]int)
+		if ok && len(placements) >= DataShards + ParityShards {
+			for i, ret := range ret.Rets {
+				placements[i], _ = strconv.Atoi(string(ret.([]byte)))
+			}
+		}
+	}
 
 	return true
 }
