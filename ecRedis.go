@@ -92,10 +92,33 @@ func (c *Client) Dial(addrArr []string) bool {
 }
 
 func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
+	// Debuging options
+	var dryrun int
+	var placements []int
+	if len(args) > 0 {
+		dryrun, _ = args[0].(int)
+	}
+	if len(args) > 1 {
+		p, ok := args[0].([]int)
+		if ok && len(p) >= DataShards + ParityShards {
+			placements = p
+		}
+	}
+
 	c.Data.Begin = time.Now()
 
 	// randomly generate destiny lambda store id
-	index := random(DataShards + ParityShards)
+	numClusters := MaxLambdaStores
+	if dryrun > 0 {
+		numClusters = dryrun
+	}
+	index := random(numClusters, DataShards + ParityShards)
+	if dryrun > 0 && placements != nil {
+		for i, ret := range index {
+			placements[i] = ret
+		}
+		return true
+	}
 
 	//addr, ok := c.getHost(key)
 	//fmt.Println("in SET, key is: ", key)
@@ -131,12 +154,9 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 		false, false)
 	log.Info("Set %s %v", key, c.Data.Duration)
 
-	if len(args) > 0 {
-		placements, ok := args[0].([]int)
-		if ok && len(placements) >= DataShards + ParityShards {
-			for i, ret := range ret.Rets {
-				placements[i], _ = strconv.Atoi(string(ret.([]byte)))
-			}
+	if placements != nil {
+		for i, ret := range ret.Rets {
+			placements[i], _ = strconv.Atoi(string(ret.([]byte)))
 		}
 	}
 
@@ -232,8 +252,8 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 
 // random will generate random sequence within the lambda stores
 // index and get top n id
-func random(n int) []int {
-	return rand.Perm(MaxLambdaStores)[:n]
+func random(cluster,n int) []int {
+	return rand.Perm(cluster)[:n]
 }
 
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
