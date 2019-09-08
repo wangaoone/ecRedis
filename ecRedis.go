@@ -231,10 +231,15 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 	defer wg.Done()
 
 	w := c.Conns[addr][i].W
-	c.Conns[addr][i].W.WriteCmdString(
-		"set", key, strconv.Itoa(i),
-		strconv.Itoa(lambdaId), strconv.Itoa(MaxLambdaStores),
-		reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards))
+	w.WriteMultiBulkSize(9)
+	w.WriteBulkString("set")
+	w.WriteBulkString(key)
+	w.WriteBulkString(strconv.Itoa(i))
+	w.WriteBulkString(strconv.Itoa(lambdaId))
+	w.WriteBulkString(strconv.Itoa(MaxLambdaStores))
+	w.WriteBulkString(reqId)
+	w.WriteBulkString(strconv.Itoa(DataShards))
+	w.WriteBulkString(strconv.Itoa(ParityShards))
 
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
