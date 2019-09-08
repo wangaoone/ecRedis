@@ -99,7 +99,7 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 		dryrun, _ = args[0].(int)
 	}
 	if len(args) > 1 {
-		p, ok := args[0].([]int)
+		p, ok := args[1].([]int)
 		if ok && len(p) >= DataShards + ParityShards {
 			placements = p
 		}
