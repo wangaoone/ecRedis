@@ -274,16 +274,16 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 	//if err := c.W[i].Flush(); err != nil {
 	if err := w.CopyBulk(bytes.NewReader(val), int64(len(val))); err != nil {
 		ret.SetError(i, err)
-		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
+		log.Warn("Failed to initiate setting %d@%s(%s): %v", i, key, addr, err)
 		return
 	}
 	if err := w.Flush(); err != nil {
 		ret.SetError(i, err)
-		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
+		log.Warn("Failed to initiate setting %d@%s(%s): %v", i, key, addr, err)
 		return
 	}
 
-	log.Debug("Initiated setting %s (%s)", key, addr)
+	log.Debug("Initiated setting %d@%s(%s)", i, key, addr)
 	c.rec("Set", addr, i, reqId, ret, nil)
 }
 
@@ -300,10 +300,10 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {
 		ret.SetError(i, err)
-		log.Warn("Failed to initiate getting %s (%s): %v", key, addr, err)
+		log.Warn("Failed to initiate getting %d@%s(%s): %v", i, key, addr, err)
 	}
 
-	log.Debug("Initiated getting %s (%s)", key, addr)
+	log.Debug("Initiated getting %d@%s(%s)", i, key, addr)
 	c.rec("Got", addr, i, reqId, ret, nil)
 }
 
