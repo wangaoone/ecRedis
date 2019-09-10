@@ -283,7 +283,8 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 		return
 	}
 
-	c.rec(addr, i, reqId, ret, nil)
+	log.Debug("Initiated setting %s (%s)", key, addr)
+	c.rec("Set", addr, i, reqId, ret, nil)
 }
 
 func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
@@ -302,10 +303,11 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 		log.Warn("Failed to initiate getting %s (%s): %v", key, addr, err)
 	}
 
-	c.rec(addr, i, reqId, ret, nil)
+	log.Debug("Initiated getting %s (%s)", key, addr)
+	c.rec("Got", addr, i, reqId, ret, nil)
 }
 
-func (c *Client) rec(addr string, i int, reqId string,ret *EcRet, wg *sync.WaitGroup) {
+func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *EcRet, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -370,7 +372,7 @@ func (c *Client) rec(addr string, i int, reqId string,ret *EcRet, wg *sync.WaitG
 		return
 	}
 
-	log.Debug("Got chunk %d", i)
+	log.Debug("%s chunk %d", prompt, i)
 	ret.Set(i, val)
 }
 
