@@ -91,7 +91,7 @@ func (c *Client) Dial(addrArr []string) bool {
 	return true
 }
 
-func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
+func (c *Client) EcSet(key string, val []byte, args ...interface{}) (string, bool) {
 	// Debuging options
 	var dryrun int
 	var placements []int
@@ -106,6 +106,7 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 	}
 
 	c.Data.Begin = time.Now()
+	c.Data.ReqId = uuid.New().String()
 
 	// randomly generate destiny lambda store id
 	numClusters := MaxLambdaStores
@@ -117,7 +118,7 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 		for i, ret := range index {
 			placements[i] = ret
 		}
-		return true
+		return c.Data.ReqId, true
 	}
 
 	//addr, ok := c.getHost(key)
@@ -130,9 +131,8 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 	shards, err := c.encode(val)
 	if err != nil {
 		log.Warn("EcSet failed to encode: %v", err)
-		return false
+		return c.Data.ReqId, false
 	}
-	c.Data.ReqId = uuid.New().String()
 
 	var wg sync.WaitGroup
 	ret := NewEcRet(DataShards, ParityShards)
@@ -146,7 +146,7 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 	c.Data.Duration = c.Data.ReqLatency
 
 	if ret.Err != nil {
-		return false
+		return c.Data.ReqId, false
 	}
 
 	nanolog.Log(LogClient, "set", c.Data.ReqId, c.Data.Begin.UnixNano(),
@@ -160,18 +160,26 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) bool {
 		}
 	}
 
-	return true
+	return c.Data.ReqId, true
 }
 
-func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
+func (c *Client) EcGet(key string, size int, args ...interface{}) (string, io.ReadCloser, bool) {
+	var dryrun int
+	if len(args) > 0 {
+		dryrun, _ = args[0].(int)
+	}
+
 	c.Data.Begin = time.Now()
+	c.Data.ReqId = uuid.New().String()
+	if dryrun > 0 {
+		return c.Data.ReqId, nil, true
+	}
 
 	//addr, ok := c.getHost(key)
 	member := c.Ring.LocateKey([]byte(key))
 	host := member.String()
 	//fmt.Println("ring LocateKey costs:", time.Since(t))
 	//fmt.Println("GET located host: ", host)
-	c.Data.ReqId = uuid.New().String()
 
 	// Send request and wait
 	var wg sync.WaitGroup
@@ -198,7 +206,7 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 	decodeStart := time.Now()
 	reader, err := c.decode(chunks, size)
 	if err != nil {
-		return nil, false
+		return c.Data.ReqId, nil, false
 	}
 
 	end := time.Now()
@@ -213,7 +221,7 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 		c.recover(host, key, uuid.New().String(), chunks, failed)
 	}
 
-	return reader, true
+	return c.Data.ReqId, reader, true
 }
 
 //func (c *Client) initDial(address string, wg *sync.WaitGroup) {
