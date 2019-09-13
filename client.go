@@ -1,19 +1,12 @@
 package ecRedis
 
 import (
-	"bytes"
 	"github.com/buraksezer/consistent"
 	"github.com/klauspost/reedsolomon"
 	"github.com/seiflotfy/cuckoofilter"
 	"github.com/wangaoone/redeo/resp"
 	"net"
 	"time"
-)
-
-var (
-	DataShards     int
-	ParityShards   int
-	ECMaxGoroutine int
 )
 
 type Conn struct {
@@ -39,23 +32,25 @@ type Client struct {
 	//R        []resp.ResponseReader
 	Conns        map[string][]*Conn
 	EC           reedsolomon.Encoder
-	Rec          bytes.Buffer
 	MappingTable map[string]*cuckoo.Filter
 	Ring         *consistent.Consistent
 	Data         DataEntry
+	DataShards     int
+	ParityShards   int
+	Shards         int
 }
 
 func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) *Client {
-	DataShards = dataShards
-	ParityShards = parityShards
-	ECMaxGoroutine = ecMaxGoroutine
 	return &Client{
 		//ConnArr:  make([]net.Conn, dataShards+parityShards),
 		//W:        make([]*resp.RequestWriter, dataShards+parityShards),
 		//R:        make([]resp.ResponseReader, dataShards+parityShards),
 		Conns:        make(map[string][]*Conn),
-		EC:           NewEncoder(DataShards, ParityShards, ECMaxGoroutine),
+		EC:           NewEncoder(dataShards, parityShards, ecMaxGoroutine),
 		MappingTable: make(map[string]*cuckoo.Filter),
+		DataShards:   dataShards,
+		ParityShards: parityShards,
+		Shards:       dataShards + parityShards,
 	}
 }
 
@@ -71,40 +66,38 @@ func (cli *Client) Close() {
 	log.Info("Client closed.")
 }
 
-type EcRet struct {
-	DataShards      int
-	ParityShards    int
+type ecRet struct {
+	Shards          int
 	Rets            []interface{}
 	Err             error
 }
 
-func NewEcRet(data,parity int) *EcRet {
-	return &EcRet{
-		DataShards: data,
-		ParityShards: parity,
-		Rets: make([]interface{}, data + parity),
+func newEcRet(shards int) *ecRet {
+	return &ecRet{
+		Shards: shards,
+		Rets: make([]interface{}, shards),
 	}
 }
 
-func (r *EcRet) Len() int {
-	return r.DataShards + r.ParityShards
+func (r *ecRet) Len() int {
+	return r.Shards
 }
 
-func (r *EcRet) Set(i int, ret interface{}) {
+func (r *ecRet) Set(i int, ret interface{}) {
 	r.Rets[i] = ret
 }
 
-func (r *EcRet) SetError(i int, ret interface{}) {
+func (r *ecRet) SetError(i int, ret interface{}) {
 	r.Rets[i] = ret
 	r.Err = ret.(error)
 }
 
-func (r *EcRet) Ret(i int) (ret []byte) {
+func (r *ecRet) Ret(i int) (ret []byte) {
 	ret, _ = r.Rets[i].([]byte)
 	return
 }
 
-func (r *EcRet) Error(i int) (err error) {
+func (r *ecRet) Error(i int) (err error) {
 	err, _ = r.Rets[i].(error)
 	return
 }
