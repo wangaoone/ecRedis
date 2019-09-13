@@ -427,13 +427,13 @@ func (c *Client) encode(obj []byte) ([][]byte, error) {
 
 func (c *Client) decode(stats *DataEntry, data [][]byte, size int) (io.ReadCloser, error) {
 	var err error
-	stats.AllGood, err  = c.EC.Verify(data)
-	if err != nil {
-		stats.Corrupted = true
-		log.Debug("Verification error, impossible to reconstructing data: %v", err)
-		return nil, err
-	} else if stats.AllGood {
+	stats.AllGood, _  = c.EC.Verify(data)
+	if stats.AllGood {
 		log.Debug("No reconstruction needed.")
+	// } else if err != nil {
+	// 	stats.Corrupted = true
+	// 	log.Debug("Verification error, impossible to reconstructing data: %v", err)
+	// 	return nil, err
 	} else {
 		log.Debug("Verification failed. Reconstructing data...")
 		err := c.EC.Reconstruct(data)
