@@ -426,7 +426,7 @@ func (c *Client) encode(obj []byte) ([][]byte, error) {
 }
 
 func (c *Client) decode(stats *DataEntry, data [][]byte, size int) (io.ReadCloser, error) {
-	var err error
+	// var err error
 	stats.AllGood, _  = c.EC.Verify(data)
 	if stats.AllGood {
 		log.Debug("No reconstruction needed.")
