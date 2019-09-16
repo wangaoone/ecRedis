@@ -19,7 +19,8 @@ import (
 )
 
 const (
-	MaxLambdaStores int = 300
+	// This setting will avoid network contention.
+	MaxLambdaStores int = 200
 )
 
 var (
@@ -30,6 +31,10 @@ var (
 	}
 	ErrUnexpectedResponse = errors.New("Unexpected response")
 )
+
+func init() {
+	rand.Seed(time.Now().UnixNano())
+}
 
 type Member string
 
@@ -86,68 +91,107 @@ func (c *Client) Dial(addrArr []string) bool {
 	return true
 }
 
-func (c *Client) EcSet(key string, val []byte) bool {
-	c.Data.Begin = time.Now()
+func (c *Client) EcSet(key string, val []byte, args ...interface{}) (string, bool) {
+	// Debuging options
+	var dryrun int
+	var placements []int
+	if len(args) > 0 {
+		dryrun, _ = args[0].(int)
+	}
+	if len(args) > 1 {
+		p, ok := args[1].([]int)
+		if ok && len(p) >= c.Shards {
+			placements = p
+		}
+	}
+
+	stats := &c.Data
+	stats.Begin = time.Now()
+	stats.ReqId = uuid.New().String()
 
 	// randomly generate destiny lambda store id
-	index := random(DataShards + ParityShards)
+	numClusters := MaxLambdaStores
+	if dryrun > 0 {
+		numClusters = dryrun
+	}
+	index := random(numClusters, c.Shards)
+	if dryrun > 0 && placements != nil {
+		for i, ret := range index {
+			placements[i] = ret
+		}
+		return stats.ReqId, true
+	}
 
 	//addr, ok := c.getHost(key)
 	//fmt.Println("in SET, key is: ", key)
 	member := c.Ring.LocateKey([]byte(key))
 	host := member.String()
-	// log.Debug("ring LocateKey costs: %v", time.Since(c.Data.Begin))
+	// log.Debug("ring LocateKey costs: %v", time.Since(stats.Begin))
 	// log.Debug("SET located host: %s", host)
 
 	shards, err := c.encode(val)
 	if err != nil {
 		log.Warn("EcSet failed to encode: %v", err)
-		return false
+		return stats.ReqId, false
 	}
-	c.Data.ReqId = uuid.New().String()
 
 	var wg sync.WaitGroup
-	ret := NewEcRet(DataShards, ParityShards)
+	ret := newEcRet(c.Shards)
 	for i := 0; i < ret.Len(); i++ {
 		//fmt.Println("shards", i, "is", shards[i])
 		wg.Add(1)
-		go c.set(host, key, shards[i], i, index[i], c.Data.ReqId, &wg, ret)
+		go c.set(host, key, shards[i], i, index[i], stats.ReqId, &wg, ret)
 	}
 	wg.Wait()
-	c.Data.ReqLatency = time.Since(c.Data.Begin)
-	c.Data.Duration = c.Data.ReqLatency
+	stats.ReqLatency = time.Since(stats.Begin)
+	stats.Duration = stats.ReqLatency
 
 	if ret.Err != nil {
-		return false
+		return stats.ReqId, false
 	}
 
-	nanolog.Log(LogClient, "set", c.Data.ReqId, c.Data.Begin.UnixNano(),
-		int64(c.Data.Duration), int64(c.Data.ReqLatency), int64(0), int64(0),
+	nanolog.Log(LogClient, "set", stats.ReqId, stats.Begin.UnixNano(),
+		int64(stats.Duration), int64(stats.ReqLatency), int64(0), int64(0),
 		false, false)
-	log.Info("Set %s %v", key, c.Data.Duration)
+	log.Info("Set %s %v", key, stats.Duration)
 
-	return true
+	if placements != nil {
+		for i, ret := range ret.Rets {
+			placements[i], _ = strconv.Atoi(string(ret.([]byte)))
+		}
+	}
+
+	return stats.ReqId, true
 }
 
-func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
-	c.Data.Begin = time.Now()
+func (c *Client) EcGet(key string, size int, args ...interface{}) (string, io.ReadCloser, bool) {
+	var dryrun int
+	if len(args) > 0 {
+		dryrun, _ = args[0].(int)
+	}
+
+	stats := &c.Data
+	stats.Begin = time.Now()
+	stats.ReqId = uuid.New().String()
+	if dryrun > 0 {
+		return stats.ReqId, nil, true
+	}
 
 	//addr, ok := c.getHost(key)
 	member := c.Ring.LocateKey([]byte(key))
 	host := member.String()
 	//fmt.Println("ring LocateKey costs:", time.Since(t))
 	//fmt.Println("GET located host: ", host)
-	c.Data.ReqId = uuid.New().String()
 
 	// Send request and wait
 	var wg sync.WaitGroup
-	ret := NewEcRet(DataShards, ParityShards)
+	ret := newEcRet(c.Shards)
 	for i := 0; i < ret.Len(); i++ {
 		wg.Add(1)
-		go c.get(host, key, i, c.Data.ReqId, &wg, ret)
+		go c.get(host, key, i, stats.ReqId, &wg, ret)
 	}
 	wg.Wait()
-	c.Data.RecLatency = time.Since(c.Data.Begin)
+	stats.RecLatency = time.Since(stats.Begin)
 
 	// Filter results
 	chunks := make([][]byte, ret.Len())
@@ -162,32 +206,32 @@ func (c *Client) EcGet(key string, size int) (io.ReadCloser, bool) {
 	}
 
 	decodeStart := time.Now()
-	reader, err := c.decode(chunks, size)
+	reader, err := c.decode(stats, chunks, size)
 	if err != nil {
-		return nil, false
+		return stats.ReqId, nil, false
 	}
 
 	end := time.Now()
-	c.Data.Duration = end.Sub(c.Data.Begin)
-	nanolog.Log(LogClient, "get", c.Data.ReqId, c.Data.Begin.UnixNano(),
-		int64(c.Data.Duration), int64(0), int64(c.Data.RecLatency), int64(end.Sub(decodeStart)),
-		c.Data.AllGood, c.Data.Corrupted)
-	log.Info("Got %s %v(%v %v)", key, c.Data.Duration, c.Data.RecLatency, end.Sub(decodeStart))
+	stats.Duration = end.Sub(stats.Begin)
+	nanolog.Log(LogClient, "get", stats.ReqId, stats.Begin.UnixNano(),
+		int64(stats.Duration), int64(0), int64(stats.RecLatency), int64(end.Sub(decodeStart)),
+		stats.AllGood, stats.Corrupted)
+	log.Info("Got %s %v(%v %v)", key, stats.Duration, stats.RecLatency, end.Sub(decodeStart))
 
 	// Try recover
 	if len(failed) > 0 {
 		c.recover(host, key, uuid.New().String(), chunks, failed)
 	}
 
-	return reader, true
+	return stats.ReqId, reader, true
 }
 
 //func (c *Client) initDial(address string, wg *sync.WaitGroup) {
 func (c *Client) initDial(address string) error {
 	// initialize parallel connections under address
-	tmp := make([]*Conn, DataShards+ParityShards)
+	tmp := make([]*Conn, c.Shards)
 	c.Conns[address] = tmp
-	for i := 0; i < DataShards+ParityShards; i++ {
+	for i := 0; i < c.Shards; i++ {
 		cn, err := net.Dial("tcp", address)
 		if err != nil {
 			return err
@@ -218,63 +262,62 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 
 // random will generate random sequence within the lambda stores
 // index and get top n id
-func random(n int) []int {
-	rand.Seed(time.Now().UnixNano())
-	return rand.Perm(MaxLambdaStores)[:n]
+func random(cluster,n int) []int {
+	return rand.Perm(cluster)[:n]
 }
 
-func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
+func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, ret *ecRet) {
 	defer wg.Done()
 
-	//c.W[i].WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	//c.Conns[addr][i].W.WriteCmdBulk("SET", key, strconv.Itoa(i), val)
-	//c.Conns[addr][i].W.WriteCmdClient("SET", key, strconv.Itoa(i), strconv.Itoa(lambdaId), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards), val) // key chunkId lambdaId reqId val
 	w := c.Conns[addr][i].W
-	w.WriteMultiBulkSize(8)
+	w.WriteMultiBulkSize(9)
 	w.WriteBulkString("set")
 	w.WriteBulkString(key)
 	w.WriteBulkString(strconv.Itoa(i))
 	w.WriteBulkString(strconv.Itoa(lambdaId))
+	w.WriteBulkString(strconv.Itoa(MaxLambdaStores))
 	w.WriteBulkString(reqId)
-	w.WriteBulkString(strconv.Itoa(DataShards))
-	w.WriteBulkString(strconv.Itoa(ParityShards))
+	w.WriteBulkString(strconv.Itoa(c.DataShards))
+	w.WriteBulkString(strconv.Itoa(c.ParityShards))
 
-	//c.Conns[addr][i].W.WriteCmdBulkRedis("SET", key, val)
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := w.CopyBulk(bytes.NewReader(val), int64(len(val))); err != nil {
 		ret.SetError(i, err)
-		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
+		log.Warn("Failed to initiate setting %d@%s(%s): %v", i, key, addr, err)
 		return
 	}
 	if err := w.Flush(); err != nil {
 		ret.SetError(i, err)
-		log.Warn("Failed to initiate setting %s (%s): %v", key, addr, err)
+		log.Warn("Failed to initiate setting %d@%s(%s): %v", i, key, addr, err)
 		return
 	}
 
-	c.rec(addr, i, reqId, ret, nil)
+	log.Debug("Initiated setting %d@%s(%s)", i, key, addr)
+	c.rec("Set", addr, i, reqId, ret, nil)
 }
 
-func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, ret *EcRet) {
+func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, ret *ecRet) {
 	defer wg.Done()
 
 	//tGet := time.Now()
 	//fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
-	//c.W[i].WriteCmdString("GET", key)
-	//c.Conns[addr][i].W.WriteCmdString("GET", key)
-	c.Conns[addr][i].W.WriteCmdString("GET", key, strconv.Itoa(i), reqId, strconv.Itoa(DataShards), strconv.Itoa(ParityShards)) // cmd key chunkId reqId DataShards ParityShards
+	c.Conns[addr][i].W.WriteCmdString(
+		"get", key, strconv.Itoa(i),
+		reqId, strconv.Itoa(c.DataShards), strconv.Itoa(c.ParityShards)) // cmd key chunkId reqId DataShards ParityShards
+
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := c.Conns[addr][i].W.Flush(); err != nil {
 		ret.SetError(i, err)
-		log.Warn("Failed to initiate getting %s (%s): %v", key, addr, err)
+		log.Warn("Failed to initiate getting %d@%s(%s): %v", i, key, addr, err)
 	}
 
-	c.rec(addr, i, reqId, ret, nil)
+	log.Debug("Initiated getting %d@%s(%s)", i, key, addr)
+	c.rec("Got", addr, i, reqId, ret, nil)
 }
 
-func (c *Client) rec(addr string, i int, reqId string,ret *EcRet, wg *sync.WaitGroup) {
+func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *ecRet, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
@@ -339,13 +382,13 @@ func (c *Client) rec(addr string, i int, reqId string,ret *EcRet, wg *sync.WaitG
 		return
 	}
 
-	log.Debug("Got chunk %d", i)
+	log.Debug("%s chunk %d", prompt, i)
 	ret.Set(i, val)
 }
 
 func (c *Client) recover(addr string, key string, reqId string, shards [][]byte, failed []int) {
 	var wg sync.WaitGroup
-	ret := NewEcRet(DataShards, ParityShards)
+	ret := newEcRet(c.Shards)
 	for _, i := range failed {
 		wg.Add(1)
 		// lambdaId = 0, for lambdaID of a specified key is fixed on setting.
@@ -382,10 +425,15 @@ func (c *Client) encode(obj []byte) ([][]byte, error) {
 	return shards, err
 }
 
-func (c *Client) decode(data [][]byte, size int) (io.ReadCloser, error) {
-	c.Data.AllGood, _ = c.EC.Verify(data)
-	if c.Data.AllGood {
+func (c *Client) decode(stats *DataEntry, data [][]byte, size int) (io.ReadCloser, error) {
+	// var err error
+	stats.AllGood, _  = c.EC.Verify(data)
+	if stats.AllGood {
 		log.Debug("No reconstruction needed.")
+	// } else if err != nil {
+	// 	stats.Corrupted = true
+	// 	log.Debug("Verification error, impossible to reconstructing data: %v", err)
+	// 	return nil, err
 	} else {
 		log.Debug("Verification failed. Reconstructing data...")
 		err := c.EC.Reconstruct(data)
@@ -393,8 +441,8 @@ func (c *Client) decode(data [][]byte, size int) (io.ReadCloser, error) {
 			log.Warn("Reconstruction failed: %v", err)
 			return nil, err
 		}
-		c.Data.Corrupted, err = c.EC.Verify(data)
-		if !c.Data.Corrupted {
+		stats.Corrupted, err = c.EC.Verify(data)
+		if !stats.Corrupted {
 			log.Warn("Verification failed after reconstruction, data could be corrupted: %v", err)
 			return nil, err
 		} else {
