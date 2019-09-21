@@ -153,7 +153,7 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) (string, boo
 	nanolog.Log(LogClient, "set", stats.ReqId, stats.Begin.UnixNano(),
 		int64(stats.Duration), int64(stats.ReqLatency), int64(0), int64(0),
 		false, false)
-	log.Info("Set %s %v", key, stats.Duration)
+	log.Info("Set %s %d", key, int64(stats.Duration))
 
 	if placements != nil {
 		for i, ret := range ret.Rets {
@@ -216,7 +216,7 @@ func (c *Client) EcGet(key string, size int, args ...interface{}) (string, io.Re
 	nanolog.Log(LogClient, "get", stats.ReqId, stats.Begin.UnixNano(),
 		int64(stats.Duration), int64(0), int64(stats.RecLatency), int64(end.Sub(decodeStart)),
 		stats.AllGood, stats.Corrupted)
-	log.Info("Got %s %v(%v %v)", key, stats.Duration, stats.RecLatency, end.Sub(decodeStart))
+	log.Info("Got %s %d ( %d %d )", key, int64(stats.Duration), int64(stats.RecLatency), int64(end.Sub(decodeStart)))
 
 	// Try recover
 	if len(failed) > 0 {
