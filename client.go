@@ -15,6 +15,10 @@ type Conn struct {
 	R    resp.ResponseReader
 }
 
+func (c *Conn) Close() {
+	c.conn.Close()
+}
+
 type DataEntry struct {
 	Cmd        string
 	ReqId      string
@@ -54,13 +58,95 @@ func NewClient(dataShards int, parityShards int, ecMaxGoroutine int) *Client {
 	}
 }
 
-func (cli *Client) Close() {
+func (c *Client) Dial(addrArr []string) bool {
+	//t0 := time.Now()
+	members := []consistent.Member{}
+	for _, host := range addrArr {
+		member := Member(host)
+		members = append(members, member)
+	}
+	//cfg := consistent.Config{
+	//	PartitionCount:    271,
+	//	ReplicationFactor: 20,
+	//	Load:              1.25,
+	//	Hasher:            hasher{},
+	//}
+	cfg := consistent.Config{
+		PartitionCount:    271,
+		ReplicationFactor: 20,
+		Load:              1.25,
+		Hasher:            hasher{},
+	}
+	c.Ring = consistent.New(members, cfg)
+	for _, addr := range addrArr {
+		log.Debug("Dialing %s...", addr)
+		if err := c.initDial(addr); err != nil {
+			log.Error("Fail to dial %s: %v", addr, err)
+			c.Close()
+			return false
+		}
+	}
+	//time0 := time.Since(t0)
+	//fmt.Println("Dial all goroutines are done!")
+	//if err := nanolog.Log(LogClient, "Dial", time0.String()); err != nil {
+	//	fmt.Println(err)
+	//}
+	return true
+}
+
+//func (c *Client) initDial(address string, wg *sync.WaitGroup) {
+func (c *Client) initDial(address string) (err error) {
+	// initialize parallel connections under address
+	tmp := make([]*Conn, c.Shards)
+	c.Conns[address] = tmp
+	var i int
+	for i = 0; i < c.Shards; i++ {
+		err = c.connect(address, i)
+		if err != nil {
+			break
+		}
+	}
+	if err == nil {
+		// initialize the cuckoo filter under address
+		c.MappingTable[address] = cuckoo.NewFilter(1000000)
+	}
+
+	return
+}
+
+func (c *Client) connect(address string, i int) error {
+	cn, err := net.Dial("tcp", address)
+	if err != nil {
+		return err
+	}
+	c.Conns[address][i] = &Conn{
+		conn: cn,
+		W:    NewRequestWriter(cn),
+		R:    NewResponseReader(cn),
+	}
+	return nil
+}
+
+func (c *Client) disconnect(address string, i int) {
+	if c.Conns[address][i] != nil {
+		c.Conns[address][i].Close()
+		c.Conns[address][i] = nil
+	}
+}
+
+func (c *Client) validate(address string, i int) error {
+	if c.Conns[address][i] == nil {
+		return c.connect(address, i)
+	}
+
+	return nil
+}
+
+func (c *Client) Close() {
 	log.Info("Cleaning up...")
-	for _, conns := range cli.Conns {
-		for _, conn := range conns {
-			if conn != nil {
-				conn.conn.Close()
-			}
+	for addr, conns := range c.Conns {
+		for i, _ := range conns {
+			c.disconnect(addr, i)
 		}
 	}
 	log.Info("Client closed.")

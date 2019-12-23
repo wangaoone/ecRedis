@@ -4,10 +4,8 @@ import (
 	"bytes"
 	"errors"
 	"github.com/ScottMansfield/nanolog"
-	"github.com/buraksezer/consistent"
 	"github.com/cespare/xxhash"
 	"github.com/google/uuid"
-	"github.com/seiflotfy/cuckoofilter"
 	"github.com/wangaoone/LambdaObjectstore/lib/logger"
 	"github.com/wangaoone/redeo/resp"
 	"io"
@@ -21,6 +19,7 @@ import (
 const (
 	// This setting will avoid network contention.
 	MaxLambdaStores int = 200
+	Timeout = 30 * time.Second
 )
 
 var (
@@ -53,42 +52,6 @@ func NewRequestWriter(wr io.Writer) *resp.RequestWriter {
 }
 func NewResponseReader(rd io.Reader) resp.ResponseReader {
 	return resp.NewResponseReader(rd)
-}
-
-func (c *Client) Dial(addrArr []string) bool {
-	//t0 := time.Now()
-	members := []consistent.Member{}
-	for _, host := range addrArr {
-		member := Member(host)
-		members = append(members, member)
-	}
-	//cfg := consistent.Config{
-	//	PartitionCount:    271,
-	//	ReplicationFactor: 20,
-	//	Load:              1.25,
-	//	Hasher:            hasher{},
-	//}
-	cfg := consistent.Config{
-		PartitionCount:    271,
-		ReplicationFactor: 20,
-		Load:              1.25,
-		Hasher:            hasher{},
-	}
-	c.Ring = consistent.New(members, cfg)
-	for _, addr := range addrArr {
-		log.Debug("Dialing %s...", addr)
-		if err := c.initDial(addr); err != nil {
-			log.Error("Fail to dial %s: %v", addr, err)
-			c.Close()
-			return false
-		}
-	}
-	//time0 := time.Since(t0)
-	//fmt.Println("Dial all goroutines are done!")
-	//if err := nanolog.Log(LogClient, "Dial", time0.String()); err != nil {
-	//	fmt.Println(err)
-	//}
-	return true
 }
 
 func (c *Client) EcSet(key string, val []byte, args ...interface{}) (string, bool) {
@@ -226,28 +189,6 @@ func (c *Client) EcGet(key string, size int, args ...interface{}) (string, io.Re
 	return stats.ReqId, reader, true
 }
 
-//func (c *Client) initDial(address string, wg *sync.WaitGroup) {
-func (c *Client) initDial(address string) error {
-	// initialize parallel connections under address
-	tmp := make([]*Conn, c.Shards)
-	c.Conns[address] = tmp
-	for i := 0; i < c.Shards; i++ {
-		cn, err := net.Dial("tcp", address)
-		if err != nil {
-			return err
-		}
-		tmp[i] = &Conn{
-			conn: cn,
-			W:    NewRequestWriter(cn),
-			R:    NewResponseReader(cn),
-		}
-	}
-
-	// initialize the cuckoo filter under address
-	c.MappingTable[address] = cuckoo.NewFilter(1000000)
-	return nil
-}
-
 func (c *Client) getHost(key string) (addr string, ok bool) {
 	// linear search through all filters and locate the one that holds the key
 	for addr, filter := range c.MappingTable {
@@ -266,10 +207,28 @@ func random(cluster,n int) []int {
 	return rand.Perm(cluster)[:n]
 }
 
+func (c *Client) setError(ret *ecRet, addr string, i int, err error) {
+	if err == io.EOF {
+		c.disconnect(addr, i)
+	} else if err, ok := err.(net.Error); ok && err.Timeout() {
+		c.disconnect(addr, i)
+	}
+	ret.SetError(i, err)
+}
+
 func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, reqId string, wg *sync.WaitGroup, ret *ecRet) {
 	defer wg.Done()
 
-	w := c.Conns[addr][i].W
+	if err := c.validate(addr, i); err != nil {
+		c.setError(ret, addr, i, err)
+		log.Warn("Failed to validate connection %d@%s(%s): %v", i, key, addr, err)
+		return
+	}
+	cn := c.Conns[addr][i]
+	cn.conn.SetWriteDeadline(time.Now().Add(Timeout))  // Set deadline for request
+	defer cn.conn.SetWriteDeadline(time.Time{})
+
+	w := cn.W
 	w.WriteMultiBulkSize(9)
 	w.WriteBulkString("set")
 	w.WriteBulkString(key)
@@ -283,15 +242,16 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
 	if err := w.CopyBulk(bytes.NewReader(val), int64(len(val))); err != nil {
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		log.Warn("Failed to initiate setting %d@%s(%s): %v", i, key, addr, err)
 		return
 	}
 	if err := w.Flush(); err != nil {
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		log.Warn("Failed to initiate setting %d@%s(%s): %v", i, key, addr, err)
 		return
 	}
+	cn.conn.SetWriteDeadline(time.Time{})
 
 	log.Debug("Initiated setting %d@%s(%s)", i, key, addr)
 	c.rec("Set", addr, i, reqId, ret, nil)
@@ -300,18 +260,29 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.WaitGroup, ret *ecRet) {
 	defer wg.Done()
 
+	if err := c.validate(addr, i); err != nil {
+		c.setError(ret, addr, i, err)
+		log.Warn("Failed to validate connection %d@%s(%s): %v", i, key, addr, err)
+		return
+	}
+	cn := c.Conns[addr][i]
+	cn.conn.SetWriteDeadline(time.Now().Add(Timeout))  // Set deadline for request
+	defer cn.conn.SetWriteDeadline(time.Time{})
+
 	//tGet := time.Now()
 	//fmt.Println("Client send GET req timeStamp", tGet, "chunkId is", i)
-	c.Conns[addr][i].W.WriteCmdString(
+	cn.W.WriteCmdString(
 		"get", key, strconv.Itoa(i),
 		reqId, strconv.Itoa(c.DataShards), strconv.Itoa(c.ParityShards)) // cmd key chunkId reqId DataShards ParityShards
 
 	// Flush pipeline
 	//if err := c.W[i].Flush(); err != nil {
-	if err := c.Conns[addr][i].W.Flush(); err != nil {
-		ret.SetError(i, err)
+	if err := cn.W.Flush(); err != nil {
+		c.setError(ret, addr, i, err)
 		log.Warn("Failed to initiate getting %d@%s(%s): %v", i, key, addr, err)
+		return
 	}
+	cn.conn.SetWriteDeadline(time.Time{})
 
 	log.Debug("Initiated getting %d@%s(%s)", i, key, addr)
 	c.rec("Got", addr, i, reqId, ret, nil)
@@ -322,12 +293,16 @@ func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *ecRet,
 		defer wg.Done()
 	}
 
+	cn := c.Conns[addr][i]
+	cn.conn.SetReadDeadline(time.Now().Add(Timeout))  // Set deadline for response
+	defer cn.conn.SetReadDeadline(time.Time{})
+
 	// peeking response type and receive
 	// chunk id
-	type0, err := c.Conns[addr][i].R.PeekType()
+	type0, err := cn.R.PeekType()
 	if err != nil {
 		log.Warn("PeekType error on receiving chunk %d: %v", i, err)
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		return
 	}
 
@@ -338,14 +313,14 @@ func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *ecRet,
 			err = errors.New(strErr)
 		}
 		log.Warn("Error on receiving chunk %d: %v", i, err)
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		return
 	}
 
 	respId, err := c.Conns[addr][i].R.ReadBulkString()
 	if err != nil {
 		log.Warn("Failed to read reqId on receiving chunk %d: %v", i, err)
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		return
 	}
 	if respId != reqId {
@@ -360,7 +335,7 @@ func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *ecRet,
 	chunkId, err := c.Conns[addr][i].R.ReadBulkString()
 	if err != nil {
 		log.Warn("Failed to read chunkId on receiving chunk %d: %v", i, err)
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		return
 	}
 	if chunkId == "-1" {
@@ -372,13 +347,13 @@ func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *ecRet,
 	valReader, err := c.Conns[addr][i].R.StreamBulk()
 	if err != nil {
 		log.Warn("Error on get value reader on receiving chunk %d: %v", i, err)
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		return
 	}
 	val, err := valReader.ReadAll()
 	if err != nil {
 		log.Error("Error on get value on receiving chunk %d: %v", i, err)
-		ret.SetError(i, err)
+		c.setError(ret, addr, i, err)
 		return
 	}
 
