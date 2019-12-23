@@ -19,7 +19,7 @@ import (
 const (
 	// This setting will avoid network contention.
 	MaxLambdaStores int = 200
-	Timeout = 30 * time.Second
+	Timeout             = 2 * time.Minute
 )
 
 var (
