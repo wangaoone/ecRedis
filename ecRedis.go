@@ -3,17 +3,18 @@ package ecRedis
 import (
 	"bytes"
 	"errors"
-	"github.com/ScottMansfield/nanolog"
-	"github.com/cespare/xxhash"
-	"github.com/google/uuid"
-	"github.com/wangaoone/LambdaObjectstore/lib/logger"
-	"github.com/wangaoone/redeo/resp"
 	"io"
 	"math/rand"
 	"net"
 	"strconv"
 	"sync"
 	"time"
+
+	"github.com/ScottMansfield/nanolog"
+	"github.com/cespare/xxhash"
+	"github.com/google/uuid"
+	"github.com/mason-leap-lab/redeo/resp"
+	"github.com/wangaoone/ecRedis/logger"
 )
 
 const (
@@ -78,6 +79,7 @@ func (c *Client) EcSet(key string, val []byte, args ...interface{}) (string, boo
 		numClusters = dryrun
 	}
 	index := random(numClusters, c.Shards)
+	log.Info("placements is %v", index)
 	if dryrun > 0 && placements != nil {
 		for i, ret := range index {
 			placements[i] = ret
@@ -203,7 +205,7 @@ func (c *Client) getHost(key string) (addr string, ok bool) {
 
 // random will generate random sequence within the lambda stores
 // index and get top n id
-func random(cluster,n int) []int {
+func random(cluster, n int) []int {
 	return rand.Perm(cluster)[:n]
 }
 
@@ -225,7 +227,7 @@ func (c *Client) set(addr string, key string, val []byte, i int, lambdaId int, r
 		return
 	}
 	cn := c.Conns[addr][i]
-	cn.conn.SetWriteDeadline(time.Now().Add(Timeout))  // Set deadline for request
+	cn.conn.SetWriteDeadline(time.Now().Add(Timeout)) // Set deadline for request
 	defer cn.conn.SetWriteDeadline(time.Time{})
 
 	w := cn.W
@@ -266,7 +268,7 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 		return
 	}
 	cn := c.Conns[addr][i]
-	cn.conn.SetWriteDeadline(time.Now().Add(Timeout))  // Set deadline for request
+	cn.conn.SetWriteDeadline(time.Now().Add(Timeout)) // Set deadline for request
 	defer cn.conn.SetWriteDeadline(time.Time{})
 
 	//tGet := time.Now()
@@ -288,13 +290,13 @@ func (c *Client) get(addr string, key string, i int, reqId string, wg *sync.Wait
 	c.rec("Got", addr, i, reqId, ret, nil)
 }
 
-func (c *Client) rec(prompt string, addr string, i int, reqId string,ret *ecRet, wg *sync.WaitGroup) {
+func (c *Client) rec(prompt string, addr string, i int, reqId string, ret *ecRet, wg *sync.WaitGroup) {
 	if wg != nil {
 		defer wg.Done()
 	}
 
 	cn := c.Conns[addr][i]
-	cn.conn.SetReadDeadline(time.Now().Add(Timeout))  // Set deadline for response
+	cn.conn.SetReadDeadline(time.Now().Add(Timeout)) // Set deadline for response
 	defer cn.conn.SetReadDeadline(time.Time{})
 
 	// peeking response type and receive
@@ -402,13 +404,13 @@ func (c *Client) encode(obj []byte) ([][]byte, error) {
 
 func (c *Client) decode(stats *DataEntry, data [][]byte, size int) (io.ReadCloser, error) {
 	// var err error
-	stats.AllGood, _  = c.EC.Verify(data)
+	stats.AllGood, _ = c.EC.Verify(data)
 	if stats.AllGood {
 		log.Debug("No reconstruction needed.")
-	// } else if err != nil {
-	// 	stats.Corrupted = true
-	// 	log.Debug("Verification error, impossible to reconstructing data: %v", err)
-	// 	return nil, err
+		// } else if err != nil {
+		// 	stats.Corrupted = true
+		// 	log.Debug("Verification error, impossible to reconstructing data: %v", err)
+		// 	return nil, err
 	} else {
 		log.Debug("Verification failed. Reconstructing data...")
 		err := c.EC.Reconstruct(data)
